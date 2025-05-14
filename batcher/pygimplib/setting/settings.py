@@ -805,7 +805,14 @@ class Setting(utils_.SettingParentMixin, utils_.SettingEventsMixin, metaclass=me
       
       return default_default_value
     else:
-      return self._raw_to_value(default_value)
+      resolved_default_value = self._raw_to_value(default_value)
+
+      # This ensures that the processed value is used in `to_dict()` rather than
+      # the raw value to avoid errors when persisting the setting.
+      if 'default_value' in self._dict_on_init:
+        self._dict_on_init['default_value'] = resolved_default_value
+
+      return resolved_default_value
   
   def _get_pdb_type(self, pdb_type):
     if isinstance(pdb_type, str):
@@ -2465,16 +2472,12 @@ class FileSetting(Setting):
 
   def _value_to_raw(self, value):
     if value is not None:
-      if isinstance(value, str):
-        # The default value could be loaded or passed to `__init__()` as a string.
-        return value
-      else:
-        return value.get_uri()
+      return value.get_uri()
     else:
       return value
 
-  def _validate(self, file_):
-    if not self._none_ok and not isinstance(file_, Gio.File):
+  def _validate(self, file):
+    if not self._none_ok and not isinstance(file, Gio.File):
       return 'invalid file', 'invalid_value'
 
   def _get_pdb_param(self):
@@ -2552,8 +2555,8 @@ class BytesSetting(Setting):
   def _value_to_raw(self, value):
     return list(value.get_data())
 
-  def _validate(self, file_):
-    if not isinstance(file_, GLib.Bytes):
+  def _validate(self, file):
+    if not isinstance(file, GLib.Bytes):
       return 'invalid byte sequence', 'invalid_value'
 
   def _get_pdb_param(self):
@@ -2818,22 +2821,56 @@ class UnitSetting(Setting):
 
   _DEFAULT_DEFAULT_VALUE = lambda self: Gimp.Unit.pixel()
 
+  _BUILT_IN_UNITS = None
+
   def __init__(self, name: str, show_pixels: bool = True, show_percent: bool = True, **kwargs):
     self._show_pixels = show_pixels
     self._show_percent = show_percent
 
     # We use id() instead of relying on hashes as hashes may either be
     # unavailable or, when using stubs, result in 0 hash for all these objects.
-    self._built_in_units = {
-      id(Gimp.Unit.inch()): 'inch',
-      id(Gimp.Unit.mm()): 'mm',
-      id(Gimp.Unit.percent()): 'percent',
-      id(Gimp.Unit.pica()): 'pica',
-      id(Gimp.Unit.pixel()): 'pixel',
-      id(Gimp.Unit.point()): 'point',
-    }
+    self._built_in_units = self.get_built_in_units()
 
     super().__init__(name, **kwargs)
+
+  @classmethod
+  def get_built_in_units(cls):
+    if cls._BUILT_IN_UNITS is None:
+      cls._BUILT_IN_UNITS = {
+        Gimp.Unit.inch().get_id(): 'inch',
+        Gimp.Unit.mm().get_id(): 'mm',
+        Gimp.Unit.percent().get_id(): 'percent',
+        Gimp.Unit.pica().get_id(): 'pica',
+        Gimp.Unit.pixel().get_id(): 'pixel',
+        Gimp.Unit.point().get_id(): 'point',
+      }
+
+    return cls._BUILT_IN_UNITS
+
+  @classmethod
+  def raw_data_to_unit(cls, raw_value: Union[Iterable, str]):
+    if isinstance(raw_value, str):
+      if hasattr(Gimp.Unit, raw_value):
+        return getattr(Gimp.Unit, raw_value)()
+      else:
+        return raw_value
+    elif isinstance(raw_value, Iterable):
+      return Gimp.Unit.new(*raw_value)
+    else:
+      return raw_value
+
+  @classmethod
+  def unit_to_raw_data(cls, unit, built_in_units) -> Union[List, str]:
+    if unit.get_id() in built_in_units:
+      return built_in_units[unit.get_id()]
+    else:
+      return [
+        unit.get_name(),
+        unit.get_factor(),
+        unit.get_digits(),
+        unit.get_symbol(),
+        unit.get_abbreviation(),
+      ]
 
   @property
   def show_pixels(self):
@@ -2866,27 +2903,10 @@ class UnitSetting(Setting):
       return 'invalid unit', 'invalid_value'
 
   def _raw_to_value(self, raw_value: Union[Iterable, str]):
-    if isinstance(raw_value, str):
-      if hasattr(Gimp.Unit, raw_value):
-        return getattr(Gimp.Unit, raw_value)()
-      else:
-        return raw_value
-    elif isinstance(raw_value, Iterable):
-      return Gimp.Unit.new(*raw_value)
-    else:
-      return raw_value
+    return self.raw_data_to_unit(raw_value)
 
   def _value_to_raw(self, unit: Gimp.Unit) -> Union[List, str]:
-    if id(unit) in self._built_in_units:
-      return self._built_in_units[id(unit)]
-    else:
-      return [
-        unit.get_name(),
-        unit.get_factor(),
-        unit.get_digits(),
-        unit.get_symbol(),
-        unit.get_abbreviation(),
-      ]
+    return self.unit_to_raw_data(unit, self._built_in_units)
 
 
 class ArraySetting(Setting):

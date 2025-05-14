@@ -1,6 +1,30 @@
 ## Upcoming
 
+General changes:
+* Added Japanese translation (thanks to @re-unknown).
+
+Changes to the user interface:
+* Batch Convert: Changed `Add Files...` and `Add Folders...` to menu entries displayed when clicking the new `Add...` button. Likewise, `Remove Selected` and `Remove All` were moved under the new `Remove...` button.
+* Batch Convert: Increased initial preview height.
+
+Changes to procedures and constraints:
+* Edit Layers: The `Selected in GIMP` constraint is now added on the first run/after reset.
+
+Bug fixes:
+* Fixed the `Scale` procedure always considering the layer size when keeping aspect ratio or scaling to fit dimensions.
+* Fixed the output folder button not filling the empty space when increasing the dialog width.
+
+
+## 1.0.2
+
+### April 01, 2025
+
+* Added Dutch translation (thanks to @DiGro).
+* Updated German translation (thanks to @ChrisLauinger77).
 * Fixed a crash when saving `Export`/`Also export as...` procedures (#37).
+* Fixed a crash on startup if the `Pictures` user folder as the default folder is not available (#41).
+* Fixed several typos in translatable strings.
+* Updated installation instructions for Flatpak users.
 
 
 ## 1.0.1

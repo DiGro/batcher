@@ -11,6 +11,7 @@ from src import background_foreground
 from src import builtin_actions_common
 from src import export as export_
 from src import overwrite
+from src import placeholders as placeholders_
 from src import renamer as renamer_
 from src import utils
 from src.procedure_groups import *
@@ -174,27 +175,27 @@ def align_and_offset_layers(
 
     if x_offset:
       if x_offset_unit == Units.PIXELS:
-        new_x += int(x_offset)
+        new_x += round(x_offset)
       elif x_offset_unit == Units.PERCENT_IMAGE_WIDTH:
-        new_x += int(round((image_width * x_offset) / 100))
+        new_x += round((image_width * x_offset) / 100)
       elif x_offset_unit == Units.PERCENT_IMAGE_HEIGHT:
-        new_x += int(round((image_height * x_offset) / 100))
+        new_x += round((image_height * x_offset) / 100)
       elif x_offset_unit == Units.PERCENT_LAYER_WIDTH:
-        new_x += int(round((ref_layer_width * x_offset) / 100))
+        new_x += round((ref_layer_width * x_offset) / 100)
       elif x_offset_unit == Units.PERCENT_LAYER_HEIGHT:
-        new_x += int(round((ref_layer_height * x_offset) / 100))
+        new_x += round((ref_layer_height * x_offset) / 100)
 
     if y_offset:
       if y_offset_unit == Units.PIXELS:
-        new_y += int(y_offset)
+        new_y += round(y_offset)
       elif y_offset_unit == Units.PERCENT_IMAGE_WIDTH:
-        new_y += int(round((image_width * y_offset) / 100))
+        new_y += round((image_width * y_offset) / 100)
       elif y_offset_unit == Units.PERCENT_IMAGE_HEIGHT:
-        new_y += int(round((image_height * y_offset) / 100))
+        new_y += round((image_height * y_offset) / 100)
       elif y_offset_unit == Units.PERCENT_LAYER_WIDTH:
-        new_y += int(round((ref_layer_width * y_offset) / 100))
+        new_y += round((ref_layer_width * y_offset) / 100)
       elif y_offset_unit == Units.PERCENT_LAYER_HEIGHT:
-        new_y += int(round((ref_layer_height * y_offset) / 100))
+        new_y += round((ref_layer_height * y_offset) / 100)
 
     layer.set_offsets(new_x, new_y)
 
@@ -317,33 +318,48 @@ def resize_to_layer_size(_batcher, layers):
 
 
 def scale(
-      _batcher,
+      batcher,
       image,
       layer,
       object_to_scale,
       new_width,
-      width_unit,
       new_height,
-      height_unit,
       interpolation,
       local_origin,
       scale_to_fit,
       keep_aspect_ratio,
       dimension_to_keep,
 ):
-  width_pixels = _convert_to_pixels(image, layer, new_width, width_unit)
-  height_pixels = _convert_to_pixels(image, layer, new_height, height_unit)
+  new_width_pixels = _unit_to_pixels(batcher, new_width, 'width')
+  new_height_pixels = _unit_to_pixels(batcher, new_height, 'height')
+
+  if object_to_scale == ScaleObjects.LAYER:
+    orig_width_pixels = layer.get_width()
+    orig_height_pixels = layer.get_height()
+  else:
+    orig_width_pixels = image.get_width()
+    orig_height_pixels = image.get_height()
+
+  if orig_width_pixels == 0:
+    orig_width_pixels = 1
+
+  if orig_height_pixels == 0:
+    orig_height_pixels = 1
 
   if scale_to_fit and not keep_aspect_ratio:
     processed_width_pixels, processed_height_pixels = _get_scale_to_fit_values(
-      layer, width_pixels, height_pixels)
+      orig_width_pixels, orig_height_pixels, new_width_pixels, new_height_pixels)
   else:
     if keep_aspect_ratio:
       processed_width_pixels, processed_height_pixels = _get_keep_aspect_ratio_values(
-        dimension_to_keep, layer, width_pixels, height_pixels)
+        dimension_to_keep,
+        orig_width_pixels,
+        orig_height_pixels,
+        new_width_pixels,
+        new_height_pixels)
     else:
-      processed_width_pixels = width_pixels
-      processed_height_pixels = height_pixels
+      processed_width_pixels = new_width_pixels
+      processed_height_pixels = new_height_pixels
 
   Gimp.context_push()
   Gimp.context_set_interpolation(interpolation)
@@ -356,19 +372,34 @@ def scale(
   Gimp.context_pop()
 
 
-def _convert_to_pixels(image, layer, dimension, dimension_unit):
-  if dimension_unit == Units.PERCENT_IMAGE_WIDTH:
-    pixels = (dimension / 100) * image.get_width()
-  elif dimension_unit == Units.PERCENT_IMAGE_HEIGHT:
-    pixels = (dimension / 100) * image.get_height()
-  elif dimension_unit == Units.PERCENT_LAYER_WIDTH:
-    pixels = (dimension / 100) * layer.get_width()
-  elif dimension_unit == Units.PERCENT_LAYER_HEIGHT:
-    pixels = (dimension / 100) * layer.get_height()
-  else:
-    pixels = dimension
+def _unit_to_pixels(batcher, dimension, dimension_name):
+  if dimension['unit'] == Gimp.Unit.percent():
+    placeholder_object = placeholders_.PLACEHOLDERS[dimension['percent_object']]
+    gimp_object = placeholder_object.replace_args(None, batcher)
 
-  int_pixels = int(pixels)
+    if dimension_name == 'width':
+      gimp_object_dimension = gimp_object.get_width()
+    elif dimension_name == 'height':
+      gimp_object_dimension = gimp_object.get_height()
+    else:
+      raise ValueError('value for dimension_name not valid')
+
+    pixels = (dimension['percent_value'] / 100) * gimp_object_dimension
+  elif dimension['unit'] == Gimp.Unit.pixel():
+    pixels = dimension['pixel_value']
+  else:
+    image_resolution = batcher.current_image.get_resolution()
+    if dimension_name == 'width':
+      image_resolution_for_dimension = image_resolution.xresolution
+    elif dimension_name == 'height':
+      image_resolution_for_dimension = image_resolution.yresolution
+    else:
+      raise ValueError('value for dimension_name not valid')
+
+    pixels = (
+      dimension['other_value'] / dimension['unit'].get_factor() * image_resolution_for_dimension)
+
+  int_pixels = round(pixels)
 
   if int_pixels <= 0:
     int_pixels = 1
@@ -376,43 +407,38 @@ def _convert_to_pixels(image, layer, dimension, dimension_unit):
   return int_pixels
 
 
-def _get_keep_aspect_ratio_values(dimension_to_keep, layer, width_pixels, height_pixels):
-  layer_width = layer.get_width()
-  if layer_width == 0:
-    layer_width = 1
-
-  layer_height = layer.get_height()
-  if layer_height == 0:
-    layer_height = 1
-
+def _get_keep_aspect_ratio_values(
+      dimension_to_keep,
+      orig_width_pixels,
+      orig_height_pixels,
+      new_width_pixels,
+      new_height_pixels):
   if dimension_to_keep == Dimensions.WIDTH:
-    processed_width_pixels = width_pixels
-    processed_height_pixels = int(round(layer_height * (processed_width_pixels / layer_width)))
+    processed_new_width_pixels = new_width_pixels
+    processed_new_height_pixels = round(
+      orig_height_pixels * (processed_new_width_pixels / orig_width_pixels))
   elif dimension_to_keep == Dimensions.HEIGHT:
-    processed_height_pixels = height_pixels
-    processed_width_pixels = int(round(layer_width * (processed_height_pixels / layer_height)))
+    processed_new_height_pixels = new_height_pixels
+    processed_new_width_pixels = round(
+      orig_width_pixels * (processed_new_height_pixels / orig_height_pixels))
   else:
     raise ValueError('invalid value for dimension_to_keep; must be "width" or "height"')
 
-  return processed_width_pixels, processed_height_pixels
+  return processed_new_width_pixels, processed_new_height_pixels
 
 
-def _get_scale_to_fit_values(layer, width_pixels, height_pixels):
-  layer_width = layer.get_width()
-  if layer_width == 0:
-    layer_width = 1
+def _get_scale_to_fit_values(
+      orig_width_pixels, orig_height_pixels, new_width_pixels, new_height_pixels):
+  processed_new_width_pixels = new_width_pixels
+  processed_new_height_pixels = round(
+    orig_height_pixels * (new_width_pixels / orig_width_pixels))
 
-  layer_height = layer.get_height()
-  if layer_height == 0:
-    layer_height = 1
+  if processed_new_height_pixels > new_height_pixels:
+    processed_new_height_pixels = new_height_pixels
+    processed_new_width_pixels = round(
+      orig_width_pixels * (new_height_pixels / orig_height_pixels))
 
-  processed_width_pixels = width_pixels
-  processed_height_pixels = int(round(layer_height * (width_pixels / layer_width)))
-  if processed_height_pixels > height_pixels:
-    processed_height_pixels = height_pixels
-    processed_width_pixels = int(round(layer_width * (height_pixels / layer_height)))
-
-  return processed_width_pixels, processed_height_pixels
+  return processed_new_width_pixels, processed_new_height_pixels
 
 
 class Units:
@@ -516,7 +542,7 @@ _EXPORT_PROCEDURE_DICT_FOR_CONVERT = {
     {
       'type': 'file',
       'name': 'output_directory',
-      'default_value': Gio.file_new_for_path(pg.utils.get_pictures_directory()),
+      'default_value': Gio.file_new_for_path(pg.utils.get_default_dirpath()),
       'action': Gimp.FileChooserAction.SELECT_FOLDER,
       'display_name': _('Output folder'),
     },
@@ -680,42 +706,34 @@ _SCALE_PROCEDURE_DICT_FOR_IMAGES = {
       'display_name': _('Object to scale'),
     },
     {
-      'type': 'double',
+      'type': 'dimension',
       'name': 'new_width',
-      'default_value': 100.0,
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': Gimp.Unit.percent(),
+        'percent_object': 'current_image',
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
       'display_name': _('New width'),
     },
     {
-      'type': 'choice',
-      'name': 'width_unit',
-      'default_value': Units.PERCENT_IMAGE_WIDTH,
-      'items': [
-        (Units.PERCENT_IMAGE_WIDTH, _('% of image width')),
-        (Units.PERCENT_IMAGE_HEIGHT, _('% of image height')),
-        (Units.PERCENT_LAYER_WIDTH, _('% of layer width')),
-        (Units.PERCENT_LAYER_HEIGHT, _('% of layer height')),
-        (Units.PIXELS, _('Pixels')),
-      ],
-      'display_name': _('Unit for width'),
-    },
-    {
-      'type': 'double',
+      'type': 'dimension',
       'name': 'new_height',
-      'default_value': 100.0,
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': Gimp.Unit.percent(),
+        'percent_object': 'current_image',
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
       'display_name': _('New height'),
-    },
-    {
-      'type': 'choice',
-      'name': 'height_unit',
-      'default_value': Units.PERCENT_IMAGE_HEIGHT,
-      'items': [
-        (Units.PERCENT_IMAGE_WIDTH, _('% of image width')),
-        (Units.PERCENT_IMAGE_HEIGHT, _('% of image height')),
-        (Units.PERCENT_LAYER_WIDTH, _('% of layer width')),
-        (Units.PERCENT_LAYER_HEIGHT, _('% of layer height')),
-        (Units.PIXELS, _('Pixels')),
-      ],
-      'display_name': _('Unit for height'),
     },
     {
       'type': 'enum',
@@ -764,8 +782,10 @@ _SCALE_PROCEDURE_DICT_FOR_LAYERS.update({
   'additional_tags': [EXPORT_LAYERS_GROUP, EDIT_LAYERS_GROUP],
 })
 _SCALE_PROCEDURE_DICT_FOR_LAYERS['arguments'][2]['default_value'] = ScaleObjects.LAYER
-_SCALE_PROCEDURE_DICT_FOR_LAYERS['arguments'][4]['default_value'] = Units.PERCENT_LAYER_WIDTH
-_SCALE_PROCEDURE_DICT_FOR_LAYERS['arguments'][6]['default_value'] = Units.PERCENT_LAYER_HEIGHT
+_SCALE_PROCEDURE_DICT_FOR_LAYERS['arguments'][3]['default_value']['percent_object'] = (
+  'current_layer')
+_SCALE_PROCEDURE_DICT_FOR_LAYERS['arguments'][4]['default_value']['percent_object'] = (
+  'current_layer')
 
 
 _BUILTIN_PROCEDURES_LIST = [
