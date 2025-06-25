@@ -8,11 +8,12 @@ from gi.repository import GLib
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
+from config import CONFIG
 from src import renamer as renamer_
-
+from src import setting as setting_
+from src import utils
 from src.gui import utils as gui_utils_
+from src.gui import utils_grid as gui_utils_grid_
 from src.gui.entry import entries as entries_
 
 
@@ -125,13 +126,13 @@ class ExportSettings:
 
   def _init_setting_gui(self):
     self._settings['main/name_pattern'].set_gui(
-      gui_type=pg.setting.SETTING_GUI_TYPES.extended_entry,
+      gui_type=setting_.SETTING_GUI_TYPES.extended_entry,
       widget=self._name_pattern_entry,
       copy_previous_visible=False,
       copy_previous_sensitive=False,
     )
     self._settings['main/file_extension'].set_gui(
-      gui_type=pg.setting.SETTING_GUI_TYPES.extended_entry,
+      gui_type=setting_.SETTING_GUI_TYPES.extended_entry,
       widget=self._file_extension_entry,
       copy_previous_visible=False,
       copy_previous_sensitive=False,
@@ -169,12 +170,12 @@ class ExportSettings:
 
   def _on_name_pattern_changed(self, _setting):
     if self._name_preview is not None:
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEW_UPDATE_MILLISECONDS,
         self._name_preview.update)
 
   def _set_up_file_extension(self):
-    pg.config.SETTINGS_FOR_WHICH_TO_SUPPRESS_WARNINGS_ON_INVALID_VALUE.add(
+    CONFIG.SETTINGS_FOR_WHICH_TO_SUPPRESS_WARNINGS_ON_INVALID_VALUE.add(
       self._settings['main/file_extension'])
 
     self._file_extension_entry.connect(
@@ -191,7 +192,7 @@ class ExportSettings:
     apply_file_extension_gui_to_setting_if_valid(setting)
 
     if self._name_preview is not None:
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEW_UPDATE_MILLISECONDS,
         self._name_preview.update)
 
@@ -210,12 +211,12 @@ class ExportSettings:
 
   def _update_previews_on_export_options_change(self, _setting):
     if self._name_preview is not None:
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEW_UPDATE_MILLISECONDS,
         self._name_preview.update)
 
     if self._image_preview is not None:
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEW_UPDATE_MILLISECONDS,
         self._image_preview.update)
 
@@ -259,9 +260,9 @@ class ExportOptionsDialog:
     self._settings['main/export'].initialize_gui(only_null=True)
 
     for row_index, setting in enumerate(self._settings['main/export']):
-      gui_utils_.attach_label_to_grid(
+      gui_utils_grid_.attach_label_to_grid(
         self._grid_export_options, setting, row_index, set_name_as_tooltip=False)
-      gui_utils_.attach_widget_to_grid(
+      gui_utils_grid_.attach_widget_to_grid(
         self._grid_export_options, setting, row_index, set_name_as_tooltip=False)
 
     self._scrolled_window_viewport = Gtk.Viewport(shadow_type=Gtk.ShadowType.NONE)
@@ -298,8 +299,8 @@ class ExportOptionsDialog:
 
   def _on_export_options_dialog_realize(self, _dialog):
     if self._parent is not None:
-      self._dialog.set_transient_for(pg.gui.get_toplevel_window(self._parent))
-      self._dialog.set_attached_to(pg.gui.get_toplevel_window(self._parent))
+      self._dialog.set_transient_for(gui_utils_.get_toplevel_window(self._parent))
+      self._dialog.set_attached_to(gui_utils_.get_toplevel_window(self._parent))
 
   def _on_export_options_dialog_button_reset_clicked(self, _button):
     self._settings['main/export'].reset()

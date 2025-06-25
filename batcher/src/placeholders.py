@@ -1,5 +1,4 @@
-"""Placeholder objects replaced with real GIMP objects when calling GIMP PDB
-procedures during batch processing.
+"""Placeholder objects replaced with real GIMP objects during batch processing.
 
 The placeholder objects are defined in the `PLACEHOLDERS` dictionary.
 """
@@ -9,9 +8,9 @@ from typing import Callable, List, Optional, Union, Type
 
 from gi.repository import GObject
 
-import pygimplib as pg
-
-from src import background_foreground
+from src import exceptions
+from src import setting as setting_
+from src import utils
 from src.gui import placeholders as gui_placeholders
 
 
@@ -34,57 +33,131 @@ class Placeholder:
     return self._replacement_func(*args)
 
 
-def _get_current_image(_setting, batcher):
+def get_current_image(_setting, batcher):
   return batcher.current_image
 
 
-def _get_current_layer(_setting, batcher):
+def get_current_layer(_setting, batcher):
   return batcher.current_layer
 
 
-def _get_current_layer_for_array(setting, batcher):
-  return (_get_current_layer(setting, batcher),)
+def get_current_layer_for_array(setting, batcher):
+  return (get_current_layer(setting, batcher),)
 
 
-def _get_background_layer(_setting, batcher):
-  return background_foreground.get_background_layer(batcher)
+def get_background_layer(_setting, batcher):
+  return _get_adjacent_layer(
+    batcher,
+    lambda position, num_layers: position < num_layers - 1,
+    1,
+    ['insert_background_for_images', 'insert_background_for_layers'],
+    'color_tag',
+    _('There are no background layers.'))
 
 
-def _get_background_layer_for_array(_setting, batcher):
-  return (background_foreground.get_background_layer(batcher),)
+def get_background_layer_for_array(setting, batcher):
+  return (get_background_layer(setting, batcher),)
 
 
-def _get_foreground_layer(_setting, batcher):
-  return background_foreground.get_foreground_layer(batcher)
+def get_foreground_layer(_setting, batcher):
+  return _get_adjacent_layer(
+    batcher,
+    lambda position, num_layers: position > 0,
+    -1,
+    ['insert_foreground_for_images', 'insert_foreground_for_layers'],
+    'color_tag',
+    _('There are no foreground layers.'))
 
 
-def _get_foreground_layer_for_array(_setting, batcher):
-  return (background_foreground.get_foreground_layer(batcher),)
+def get_foreground_layer_for_array(setting, batcher):
+  return (get_foreground_layer(setting, batcher),)
 
 
-def _get_none_object(_setting, _batcher):
+def get_none_object(_setting, _batcher):
   return None
 
 
-def _get_all_top_level_layers(_setting, batcher):
+def get_all_top_level_layers(_setting, batcher):
   return batcher.current_image.get_layers()
 
 
-def _get_value_for_unsupported_parameter(setting, _batcher):
+def get_value_for_unsupported_parameter(setting, _batcher):
   return getattr(setting, 'default_param_value', None)
 
 
+def _get_adjacent_layer(
+      batcher,
+      position_cond_func,
+      adjacent_position_increment,
+      insert_builtin_action_names,
+      color_tag_argument_name_for_builtin_actions,
+      skip_message,
+):
+  image = batcher.current_image
+  layer = batcher.current_layer
+
+  if layer.get_parent() is None:
+    children = image.get_layers()
+  else:
+    children = layer.get_parent().get_children()
+
+  adjacent_layer = None
+
+  num_layers = len(children)
+
+  if num_layers > 1:
+    position = image.get_item_position(layer)
+    if position_cond_func(position, num_layers):
+      next_layer = children[position + adjacent_position_increment]
+      # A `None` element represents a background/foreground layer inserted
+      # via other means than color tags (e.g. from a file). If there are no
+      # matching color tags and `None` is present at least once, we always
+      # consider `next_layer` to be the background/foreground.
+      color_tags = []
+      for action in _get_previous_enabled_actions(batcher, batcher.current_action):
+        if any(action['orig_name'].value == orig_name
+               for orig_name in insert_builtin_action_names):
+          if color_tag_argument_name_for_builtin_actions in action['arguments']:
+            color_tags.append(
+              action[f'arguments/{color_tag_argument_name_for_builtin_actions}'].value)
+        else:
+          color_tags.append(None)
+
+      if None in color_tags or next_layer.get_color_tag() in color_tags:
+        adjacent_layer = next_layer
+
+  if adjacent_layer is not None:
+    # This is necessary for some commands relying on selected layers.
+    image.set_selected_layers([adjacent_layer])
+    return adjacent_layer
+  else:
+    raise exceptions.SkipCommand(skip_message)
+
+
+def _get_previous_enabled_actions(batcher, current_command):
+  previous_enabled_actions = []
+
+  for action in batcher.actions:
+    if action == current_command:
+      return previous_enabled_actions
+
+    if action['enabled'].value:
+      previous_enabled_actions.append(action)
+
+  return previous_enabled_actions
+
+
 _PLACEHOLDERS_LIST = [
-  ('current_image', _('Current Image'), _get_current_image),
-  ('current_layer', _('Current Layer'), _get_current_layer),
-  ('current_layer_for_array', _('Current Layer'), _get_current_layer_for_array),
-  ('background_layer', _('Background Layer'), _get_background_layer),
-  ('background_layer_for_array', _('Background Layer'), _get_background_layer_for_array),
-  ('foreground_layer', _('Foreground Layer'), _get_foreground_layer),
-  ('foreground_layer_for_array', _('Foreground Layer'), _get_foreground_layer_for_array),
-  ('all_top_level_layers', _('All Layers'), _get_all_top_level_layers),
-  ('none', _('None'), _get_none_object),
-  ('unsupported_parameter', '', _get_value_for_unsupported_parameter),
+  ('current_image', _('Current Image'), get_current_image),
+  ('current_layer', _('Current Layer'), get_current_layer),
+  ('current_layer_for_array', _('Current Layer'), get_current_layer_for_array),
+  ('background_layer', _('Layer Below (Background)'), get_background_layer),
+  ('background_layer_for_array', _('Layer Below (Background)'), get_background_layer_for_array),
+  ('foreground_layer', _('Layer Above (Foreground)'), get_foreground_layer),
+  ('foreground_layer_for_array', _('Layer Above (Foreground)'), get_foreground_layer_for_array),
+  ('all_top_level_layers', _('All Layers'), get_all_top_level_layers),
+  ('none', _('None'), get_none_object),
+  ('unsupported_parameter', '', get_value_for_unsupported_parameter),
 ]
 
 
@@ -96,11 +169,11 @@ The following placeholder objects are defined:
 * ``PLACEHOLDERS['current_image']``: The image currently being processed.
 
 * ``PLACEHOLDERS['current_layer']``: The layer currently being processed in the
-  current image. This placeholder is used for PDB procedures containing
+  current image. This placeholder is used for commands containing
   `Gimp.Layer`, `Gimp.Drawable` or `Gimp.Item` parameters.
 
 * ``PLACEHOLDERS['current_layer_for_array']``: The layer currently being
-  processed in the current image. This placeholder is used for PDB procedures
+  processed in the current image. This placeholder is used for commands
   containing the `Gimp.CoreObjectArray` parameter whose object type is
   `Gimp.Layer`, `Gimp.Drawable` or `Gimp.Item`.
 
@@ -109,19 +182,19 @@ The following placeholder objects are defined:
 
 * ``PLACEHOLDERS['background_layer_for_array']``: The layer positioned 
   immediately after the currently processed layer. This placeholder is used for 
-  PDB procedures containing the `Gimp.CoreObjectArray` parameter whose object 
+  commands containing the `Gimp.CoreObjectArray` parameter whose object 
   type is `Gimp.Layer`, `Gimp.Drawable` or `Gimp.Item`.
 
 * ``PLACEHOLDERS['foreground_layer']``: The layer positioned immediately before
   the currently processed layer.
 
-* ``PLACEHOLDERS['background_layer_for_array']``: The layer positioned 
+* ``PLACEHOLDERS['foreground_layer_for_array']``: The layer positioned 
   immediately before the currently processed layer. This placeholder is used 
-  for PDB procedures containing the `Gimp.CoreObjectArray` parameter whose 
+  for commands containing the `Gimp.CoreObjectArray` parameter whose 
   object type is `Gimp.Layer`, `Gimp.Drawable` or `Gimp.Item`.
 
 * ``PLACEHOLDERS['all_top_level_layers']``: All layers in the currently 
-  processed image. This placeholder is used for PDB procedures containing the 
+  processed image. This placeholder is used for commands containing the 
   `Gimp.CoreObjectArray` parameter whose object type is `Gimp.Layer`, 
   `Gimp.Drawable` or `Gimp.Item`.
 
@@ -130,7 +203,28 @@ The following placeholder objects are defined:
 """
 
 
-class PlaceholderSetting(pg.setting.Setting):
+ATTRIBUTES = {
+  'width': _('Width'),
+  'height': _('Height'),
+  'x_offset': _('X-offset'),
+  'y_offset': _('Y-offset'),
+}
+"""Attributes that can be obtained from objects substituted for placeholders.
+
+Not all attributes can be obtained from all objects. `PLACEHOLDER_ATTRIBUTE_MAP`
+specifies the allowed objects per a group of attributes.
+"""
+
+
+PLACEHOLDER_ATTRIBUTE_MAP = {
+  ('current_image',): ('width', 'height'),
+  ('current_layer', 'background_layer', 'foreground_layer'): (
+    'width', 'height', 'x_offset', 'y_offset'),
+}
+"""Mapping of placeholders to applicable attributes."""
+
+
+class PlaceholderSetting(setting_.Setting):
    
   _ALLOWED_GUI_TYPES = [gui_placeholders.PlaceholdersComboBoxPresenter]
 
@@ -147,11 +241,11 @@ class PlaceholderSetting(pg.setting.Setting):
     parent_class_parameters = inspect.signature(super().__init__).parameters
 
     # This ensures that extra arguments not specified in
-    # `pygimplib.Setting.__init__` are not passed there.
+    # `setting.Setting.__init__` are not passed there.
     keys_to_delete = []
     for key, value in kwargs.items():
       if key not in parent_class_parameters:
-        pg.utils.create_read_only_property(self, key, value)
+        utils.create_read_only_property(self, key, value)
         keys_to_delete.append(key)
 
     for key in keys_to_delete:
@@ -226,16 +320,16 @@ class PlaceholderArraySetting(PlaceholderSetting):
   def __init__(self, name, element_type, **kwargs):
     super().__init__(name, **kwargs)
 
-    self._element_type = pg.setting.process_setting_type(element_type)
+    self._element_type = setting_.process_setting_type(element_type)
 
   @property
-  def element_type(self) -> Type[pg.setting.Setting]:
+  def element_type(self) -> Type[setting_.Setting]:
     return self._element_type
 
   def to_dict(self):
     settings_dict = super().to_dict()
 
-    settings_dict['element_type'] = pg.setting.SETTING_TYPES[self._element_type]
+    settings_dict['element_type'] = setting_.SETTING_TYPES[self._element_type]
 
     return settings_dict
 
@@ -314,7 +408,7 @@ def get_placeholder_type_name_from_pdb_type(
       pdb_type: Union[GObject.GType, Type[GObject.GObject]],
       pdb_param_info: Optional[GObject.ParamSpec] = None,
 ) -> Union[str, None]:
-  """Returns the name of a `pygimplib.setting.Setting` subclass representing a
+  """Returns the name of a `setting.Setting` subclass representing a
   placeholder from the given GIMP PDB parameter type.
 
   Args:
@@ -327,7 +421,7 @@ def get_placeholder_type_name_from_pdb_type(
       for an object array argument (images, layers, etc.).
 
   Returns:
-    String as a human-readable name of a `pygimplib.setting.Setting` subclass
+    String as a human-readable name of a `setting.Setting` subclass
     representing a placeholder if ``pdb_type`` matches an identifier, or
     ``None`` otherwise.
   """
@@ -343,7 +437,7 @@ def get_placeholder_type_name_from_pdb_type(
 
   if pdb_type_name == 'GimpCoreObjectArray' and pdb_param_info is not None:
     _array_type, setting_dict = (
-      pg.setting.get_array_setting_type_from_gimp_core_object_array(pdb_param_info))
+      setting_.get_array_setting_type_from_gimp_core_object_array(pdb_param_info))
     key = (pdb_type_name, setting_dict['element_type'])
   else:
     key = pdb_type_name
@@ -357,14 +451,14 @@ def get_placeholder_type_name_from_pdb_type(
 
 
 _PDB_TYPES_TO_PLACEHOLDER_TYPE_NAMES = {
-  'GimpImage': pg.setting.SETTING_TYPES[PlaceholderImageSetting],
-  'GimpItem': pg.setting.SETTING_TYPES[PlaceholderItemSetting],
-  'GimpDrawable': pg.setting.SETTING_TYPES[PlaceholderDrawableSetting],
-  'GimpLayer': pg.setting.SETTING_TYPES[PlaceholderLayerSetting],
-  ('GimpCoreObjectArray', pg.setting.LayerSetting): (
-    pg.setting.SETTING_TYPES[PlaceholderLayerArraySetting]),
-  ('GimpCoreObjectArray', pg.setting.DrawableSetting): (
-    pg.setting.SETTING_TYPES[PlaceholderDrawableArraySetting]),
-  ('GimpCoreObjectArray', pg.setting.ItemSetting): (
-    pg.setting.SETTING_TYPES[PlaceholderItemArraySetting]),
+  'GimpImage': setting_.SETTING_TYPES[PlaceholderImageSetting],
+  'GimpItem': setting_.SETTING_TYPES[PlaceholderItemSetting],
+  'GimpDrawable': setting_.SETTING_TYPES[PlaceholderDrawableSetting],
+  'GimpLayer': setting_.SETTING_TYPES[PlaceholderLayerSetting],
+  ('GimpCoreObjectArray', setting_.LayerSetting): (
+    setting_.SETTING_TYPES[PlaceholderLayerArraySetting]),
+  ('GimpCoreObjectArray', setting_.DrawableSetting): (
+    setting_.SETTING_TYPES[PlaceholderDrawableArraySetting]),
+  ('GimpCoreObjectArray', setting_.ItemSetting): (
+    setting_.SETTING_TYPES[PlaceholderItemArraySetting]),
 }

@@ -9,13 +9,14 @@ from gi.repository import GLib
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
-from src import actions as actions_
+from config import CONFIG
+from src import commands as commands_
+from src import setting as setting_
 from src import update
-from src import utils as utils_
-
+from src import utils
+from src import utils_setting as utils_setting_
 from src.gui import messages as messages_
+from src.gui import utils as gui_utils_
 
 
 class SettingsManager:
@@ -38,7 +39,7 @@ class SettingsManager:
     self._dialog = dialog
     self._previews_controller = previews_controller
     self._display_message_func = (
-      display_message_func if display_message_func is not None else pg.utils.empty_func)
+      display_message_func if display_message_func is not None else utils.empty_func)
 
     self._init_gui()
 
@@ -102,10 +103,10 @@ class SettingsManager:
     if filepath is None:
       save_result = self._settings.save()
     else:
-      source = pg.setting.sources.JsonFileSource(pg.config.PROCEDURE_GROUP, filepath)
+      source = setting_.sources.JsonFileSource(CONFIG.PROCEDURE_GROUP, filepath)
       save_result = self._settings.save({'persistent': source})
 
-    if pg.setting.Persistor.FAIL in save_result.statuses_per_source.values():
+    if setting_.Persistor.FAIL in save_result.statuses_per_source.values():
       if filepath is None:
         main_message = _('Failed to save settings.')
       else:
@@ -113,7 +114,7 @@ class SettingsManager:
 
       display_load_save_settings_failure_message(
         main_message,
-        details=utils_.format_message_from_persistor_statuses(save_result, separator='\n\n'),
+        details=utils_setting_.format_message_from_persistor_statuses(save_result, separator='\n\n'),
         parent=self._dialog)
       return False
     else:
@@ -123,7 +124,7 @@ class SettingsManager:
     self._settings.reset()
 
   def _on_button_settings_clicked(self, button):
-    pg.gui.menu_popup_below_widget(self._menu_settings, button)
+    gui_utils_.menu_popup_below_widget(self._menu_settings, button)
 
   def _on_save_settings_activate(self, _menu_item):
     self._save_settings_to_default_location()
@@ -155,12 +156,12 @@ class SettingsManager:
     response_id = self._display_reset_prompt()
 
     if response_id == Gtk.ResponseType.YES:
-      actions_.clear(self._settings['main/procedures'])
-      actions_.clear(self._settings['main/constraints'])
+      commands_.clear(self._settings['main/actions'])
+      commands_.clear(self._settings['main/conditions'])
 
       self.reset_settings()
 
-      pg.setting.Persistor.clear()
+      setting_.Persistor.clear()
 
       self.save_settings()
 
@@ -205,10 +206,10 @@ class SettingsManager:
       self._display_message_func(_('Settings successfully saved.'), Gtk.MessageType.INFO)
 
   def _load_settings_from_file(self, filepath, _file_format, load_size_settings=True):
-    source = pg.setting.sources.JsonFileSource(pg.config.PROCEDURE_GROUP, filepath)
+    source = setting_.sources.JsonFileSource(CONFIG.PROCEDURE_GROUP, filepath)
 
-    actions_.clear(self._settings['main/procedures'], add_initial_actions=False)
-    actions_.clear(self._settings['main/constraints'], add_initial_actions=False)
+    commands_.clear(self._settings['main/actions'], add_initial_commands=False)
+    commands_.clear(self._settings['main/conditions'], add_initial_commands=False)
 
     settings_to_ignore_for_reset = []
     for setting in self._settings.walk(lambda s: 'ignore_reset' not in s.tags):
@@ -235,7 +236,7 @@ class SettingsManager:
       self._settings,
       sources={'persistent': source},
       update_sources=False,
-      procedure_group=pg.config.PROCEDURE_GROUP,
+      procedure_group=CONFIG.PROCEDURE_GROUP,
     )
 
     for setting in size_settings_to_ignore_for_load:
@@ -249,8 +250,8 @@ class SettingsManager:
         parent=self._dialog)
 
       self.reset_settings()
-      actions_.clear(self._settings['main/procedures'])
-      actions_.clear(self._settings['main/constraints'])
+      commands_.clear(self._settings['main/actions'])
+      commands_.clear(self._settings['main/conditions'])
 
     if self._previews_controller is not None:
       self._previews_controller.unlock_previews(self._PREVIEWS_LOAD_SETTINGS_KEY)
@@ -272,7 +273,7 @@ class SettingsManager:
       action=dialog_action,
       do_overwrite_confirmation=True,
       modal=True,
-      transient_for=pg.gui.get_toplevel_window(self._dialog),
+      transient_for=gui_utils_.get_toplevel_window(self._dialog),
     )
 
     if action == 'load':

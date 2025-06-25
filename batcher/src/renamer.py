@@ -15,8 +15,9 @@ import gi
 gi.require_version('Gimp', '3.0')
 from gi.repository import Gimp
 
-import pygimplib as pg
-
+from config import CONFIG
+from src import itemtree
+from src import utils
 from src.path import fileext
 from src.path import pattern as pattern_
 from src.procedure_groups import *
@@ -55,7 +56,7 @@ class ItemRenamer:
   def rename_folders(self):
     return self._rename_folders
 
-  def rename(self, batcher: 'src.core.Batcher', item: Optional[pg.itemtree.Item] = None):
+  def rename(self, batcher: 'src.core.Batcher', item: Optional[itemtree.Item] = None):
     if item is None:
       item = batcher.current_item
     
@@ -241,7 +242,7 @@ class NumberField(Field):
         elif not renamer.rename_items and renamer.rename_folders:
           tree_items = [
             item for item in batcher.matching_items_and_parents
-            if item.type == pg.itemtree.TYPE_FOLDER]
+            if item.type == itemtree.TYPE_FOLDER]
         else:
           tree_items = batcher.matching_items
       else:
@@ -435,7 +436,7 @@ def _get_tags(_renamer, _layer_batcher, item, _field_value, *args):
   color_tag = item.raw.get_color_tag()
   color_tag_default_names = {
     value: value.value_nick
-    for value in pg.utils.get_enum_values(Gimp.ColorTag)}
+    for value in utils.get_enum_values(Gimp.ColorTag)}
 
   # Make sure items without tags produce an empty string.
   del color_tag_default_names[Gimp.ColorTag.NONE]
@@ -601,8 +602,7 @@ _FIELDS_LIST = [
       ['[000, %d]', '005, 004, ...'],
       ['[10, %d2]', '10, 09, ...'],
     ],
-    'procedure_groups': [
-      CONVERT_GROUP, EXPORT_IMAGES_GROUP, EXPORT_LAYERS_GROUP, EDIT_LAYERS_GROUP],
+    'procedure_groups': ALL_PROCEDURE_GROUPS,
   },
   {
     'type': Field,
@@ -621,7 +621,7 @@ _FIELDS_LIST = [
       ['[image name, %i]', 'Image'],
       ['[image name, %n]', 'Image.jpg'],
     ],
-    'procedure_groups': [CONVERT_GROUP, EXPORT_IMAGES_GROUP],
+    'procedure_groups': [CONVERT_GROUP, EDIT_AND_SAVE_IMAGES_GROUP, EXPORT_IMAGES_GROUP],
   },
   {
     'type': Field,
@@ -707,8 +707,7 @@ _FIELDS_LIST = [
     'display_name': _('Output folder'),
     'str_to_insert': '[output folder]',
     'examples_lines': _examples_lines_for_output_folder_field,
-    'procedure_groups': [
-      CONVERT_GROUP, EXPORT_IMAGES_GROUP, EXPORT_LAYERS_GROUP, EDIT_LAYERS_GROUP],
+    'procedure_groups': ALL_PROCEDURE_GROUPS,
   },
   {
     'type': Field,
@@ -739,8 +738,7 @@ _FIELDS_LIST = [
       [_('Custom date format uses formatting as per the "strftime" function in Python.')],
       ['[current date, %m.%d.%Y_%H-%M]', '28.01.2019_19-04'],
     ],
-    'procedure_groups': [
-      CONVERT_GROUP, EXPORT_IMAGES_GROUP, EXPORT_LAYERS_GROUP, EDIT_LAYERS_GROUP],
+    'procedure_groups': ALL_PROCEDURE_GROUPS,
   },
   {
     'type': Field,
@@ -757,7 +755,7 @@ _FIELDS_LIST = [
       ['[attributes, %lw-%lh-%lx-%ly, %pc]', '1.0-0.54-0.0-0.08'],
       ['[attributes, %lw-%lh-%lx-%ly, %pc1]', '1.0-0.5-0.0-0.1'],
     ],
-    'procedure_groups': [CONVERT_GROUP, EXPORT_IMAGES_GROUP],
+    'procedure_groups': [CONVERT_GROUP, EDIT_AND_SAVE_IMAGES_GROUP, EXPORT_IMAGES_GROUP],
   },
   {
     'type': Field,
@@ -791,7 +789,7 @@ _FIELDS_LIST = [
          ' in the "re" module for Python.')],
       ['[replace, [image name], [a], [b], 1, ignorecase]', 'bnimal copy #1'],
     ],
-    'procedure_groups': [CONVERT_GROUP, EXPORT_IMAGES_GROUP],
+    'procedure_groups': [CONVERT_GROUP, EDIT_AND_SAVE_IMAGES_GROUP, EXPORT_IMAGES_GROUP],
   },
   {
     'type': Field,
@@ -815,7 +813,7 @@ _FIELDS_LIST = [
 
 def get_fields(tags=None):
   if tags is None:
-    tags = [pg.config.PROCEDURE_GROUP]
+    tags = [CONFIG.PROCEDURE_GROUP]
 
   return {
     field['regex']: field

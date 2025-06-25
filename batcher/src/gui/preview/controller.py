@@ -11,9 +11,10 @@ from gi.repository import GObject
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
-from src import utils as utils_
+from src import itemtree
+from src import utils
+from src import utils_itemtree as utils_itemtree_
+from src.gui import utils as gui_utils_
 
 
 class PreviewsController:
@@ -63,7 +64,7 @@ class PreviewsController:
       if name_preview_update_kwargs is None:
         name_preview_update_kwargs = {}
 
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEWS_SETTING_UPDATE_MILLISECONDS,
         self._name_preview.update,
         *name_preview_update_args,
@@ -76,7 +77,7 @@ class PreviewsController:
       if image_preview_update_kwargs is None:
         image_preview_update_kwargs = {}
 
-      pg.invocation.timeout_add_strict(
+      utils.timeout_add_strict(
         self._DELAY_PREVIEWS_SETTING_UPDATE_MILLISECONDS,
         self._update_image_preview,
         *image_preview_update_args,
@@ -94,23 +95,23 @@ class PreviewsController:
   def _add_inputs_to_name_preview(self):
     self._name_preview.remove_all_items()
 
-    utils_.add_objects_to_item_tree(
+    utils_itemtree_.add_objects_to_item_tree(
       self._name_preview.batcher.item_tree, self._settings['gui/inputs_interactive'].value)
 
-    pg.invocation.timeout_add_strict(
+    utils.timeout_add_strict(
       self._DELAY_PREVIEWS_SETTING_UPDATE_MILLISECONDS,
       self._name_preview.update)
 
   def _show_original_or_processed_item_names(self):
     self._name_preview.set_show_original_name(self._settings['gui/show_original_item_names'].value)
 
-    pg.invocation.timeout_add_strict(
+    utils.timeout_add_strict(
       self._DELAY_PREVIEWS_SETTING_UPDATE_MILLISECONDS,
       self._name_preview.update)
 
   def connect_setting_changes_to_previews(self):
-    self._connect_actions_changed(self._settings['main/procedures'])
-    self._connect_actions_changed(self._settings['main/constraints'])
+    self._connect_commands_changed(self._settings['main/actions'])
+    self._connect_commands_changed(self._settings['main/conditions'])
 
     self._connect_setting_show_original_item_names_changed_in_name_preview()
     self._connect_setting_load_save_inputs_interactive_in_name_preview()
@@ -124,61 +125,61 @@ class PreviewsController:
 
     self._connect_focus_changes_for_plugin_windows()
 
-  def _connect_actions_changed(self, actions):
-    # We store event IDs in lists in case the same action is added multiple times.
+  def _connect_commands_changed(self, commands):
+    # We store event IDs in lists in case the same command is added multiple times.
     settings_and_event_ids = collections.defaultdict(lambda: collections.defaultdict(list))
 
-    def _on_after_add_action(_actions, action_, _action_dict):
-      self._update_previews_on_setting_change_if_enabled(action_['enabled'], action_)
+    def _on_after_add_command(_commands, command_, _command_dict):
+      self._update_previews_on_setting_change_if_enabled(command_['enabled'], command_)
 
-      settings_and_event_ids[action_]['enabled'].append(
-        action_['enabled'].connect_event(
-          'value-changed', self._update_previews_on_setting_change, action_))
+      settings_and_event_ids[command_]['enabled'].append(
+        command_['enabled'].connect_event(
+          'value-changed', self._update_previews_on_setting_change, command_))
 
-      for setting in action_['arguments']:
-        settings_and_event_ids[action_][f'arguments/{setting.name}'].append(
+      for setting in command_['arguments']:
+        settings_and_event_ids[command_][f'arguments/{setting.name}'].append(
           setting.connect_event(
-            'value-changed', self._update_previews_on_setting_change_if_enabled, action_))
+            'value-changed', self._update_previews_on_setting_change_if_enabled, command_))
 
-      for setting in action_['more_options']:
-        settings_and_event_ids[action_][f'more_options/{setting.name}'].append(
+      for setting in command_['more_options']:
+        settings_and_event_ids[command_][f'more_options/{setting.name}'].append(
           setting.connect_event(
-            'value-changed', self._update_previews_on_setting_change_if_enabled, action_))
+            'value-changed', self._update_previews_on_setting_change_if_enabled, command_))
     
-    def _on_after_reorder_action(_actions, action_, *_args, **_kwargs):
-      self._update_previews_on_setting_change_if_enabled(action_['enabled'], action_)
+    def _on_after_reorder_command(_commands, command_, *_args, **_kwargs):
+      self._update_previews_on_setting_change_if_enabled(command_['enabled'], command_)
     
-    def _on_before_remove_action(_actions, action_, *_args, **_kwargs):
-      self._update_previews_on_setting_change_if_enabled(action_['enabled'], action_)
+    def _on_before_remove_command(_commands, command_, *_args, **_kwargs):
+      self._update_previews_on_setting_change_if_enabled(command_['enabled'], command_)
 
-      should_remove_action_from_event_ids = False
+      should_remove_command_from_event_ids = False
 
-      for setting_path, event_ids in settings_and_event_ids[action_].items():
+      for setting_path, event_ids in settings_and_event_ids[command_].items():
         if event_ids:
-          action_[setting_path].remove_event(event_ids[-1])
+          command_[setting_path].remove_event(event_ids[-1])
           event_ids.pop()
           # We do not have to separately check if each list is empty as they are all updated at
           # once.
-          should_remove_action_from_event_ids = True
+          should_remove_command_from_event_ids = True
 
-      if should_remove_action_from_event_ids:
-        del settings_and_event_ids[action_]
+      if should_remove_command_from_event_ids:
+        del settings_and_event_ids[command_]
     
-    actions.connect_event('after-add-action', _on_after_add_action)
+    commands.connect_event('after-add-command', _on_after_add_command)
 
-    # Activate event for existing actions
-    for action in actions:
-      _on_after_add_action(actions, action, None)
+    # Activate event for existing commands
+    for command in commands:
+      _on_after_add_command(commands, command, None)
 
-    actions.connect_event('after-reorder-action', _on_after_reorder_action)
-    actions.connect_event('before-remove-action', _on_before_remove_action)
+    commands.connect_event('after-reorder-command', _on_after_reorder_command)
+    commands.connect_event('before-remove-command', _on_before_remove_command)
 
-  def _update_previews_on_setting_change_if_enabled(self, setting, action):
-    if action['enabled'].value:
-      self._update_previews_on_setting_change(setting, action)
+  def _update_previews_on_setting_change_if_enabled(self, setting, command):
+    if command['enabled'].value:
+      self._update_previews_on_setting_change(setting, command)
 
-  def _update_previews_on_setting_change(self, setting, action):
-    if (not action['more_options/enabled_for_previews'].value
+  def _update_previews_on_setting_change(self, setting, command):
+    if (not command['more_options/enabled_for_previews'].value
         and setting.name != 'enabled_for_previews'):
       return
 
@@ -200,7 +201,7 @@ class PreviewsController:
     ignore_reset_tag_added = False
     should_reset_inputs = False
 
-    def _set_up_loading_of_inputs(setting_):
+    def _set_up_loading_of_inputs(setting):
       nonlocal orig_keep_inputs_value
       nonlocal ignore_load_tag_added
 
@@ -210,11 +211,11 @@ class PreviewsController:
         # changes.
         orig_keep_inputs_value = self._settings['gui/keep_inputs'].value
 
-      if orig_keep_inputs_value and 'ignore_load' not in setting_.tags:
+      if orig_keep_inputs_value and 'ignore_load' not in setting.tags:
         ignore_load_tag_added = True
-        setting_.tags.add('ignore_load')
+        setting.tags.add('ignore_load')
 
-    def _add_inputs_to_name_preview(setting_):
+    def _add_inputs_to_name_preview(setting):
       nonlocal orig_keep_inputs_value
       nonlocal ignore_load_tag_added
 
@@ -224,24 +225,25 @@ class PreviewsController:
       orig_keep_inputs_value = None
 
       if ignore_load_tag_added:
-        setting_.tags.discard('ignore_load')
+        setting.tags.discard('ignore_load')
         ignore_load_tag_added = False
 
-    def _get_inputs_from_name_preview(setting_):
+    def _get_inputs_from_name_preview(setting):
       if self._settings['gui/keep_inputs'].value:
-        setting_.set_value(utils_.item_tree_items_to_objects(self._name_preview.batcher.item_tree))
+        setting.set_value(
+          utils_itemtree_.item_tree_items_to_objects(self._name_preview.batcher.item_tree))
       else:
-        setting_.set_value([])
+        setting.set_value([])
 
-    def _set_up_reset_and_loading_from_file(setting_):
+    def _set_up_reset_and_loading_from_file(setting):
       nonlocal ignore_reset_tag_added
       nonlocal should_reset_inputs
       nonlocal orig_keep_inputs_value
 
       if self._settings['gui/keep_inputs'].value:
-        if 'ignore_reset' not in setting_.tags:
+        if 'ignore_reset' not in setting.tags:
           ignore_reset_tag_added = True
-          setting_.tags.add('ignore_reset')
+          setting.tags.add('ignore_reset')
       else:
         should_reset_inputs = True
 
@@ -251,12 +253,12 @@ class PreviewsController:
         # feasible.
         orig_keep_inputs_value = self._settings['gui/keep_inputs'].value
 
-    def _remove_ignore_reset_tag_and_clear_preview_if_not_keep_inputs(setting_):
+    def _remove_ignore_reset_tag_and_clear_preview_if_not_keep_inputs(setting):
       nonlocal ignore_reset_tag_added
       nonlocal should_reset_inputs
 
       if ignore_reset_tag_added:
-        setting_.tags.discard('ignore_reset')
+        setting.tags.discard('ignore_reset')
         ignore_reset_tag_added = False
 
       if should_reset_inputs:
@@ -318,14 +320,14 @@ class PreviewsController:
   def _on_related_window_window_state_event(self, widget, event):
     if not isinstance(widget, Gtk.Window):
       # This handles widgets such as `Gtk.Menu` that display menu popups.
-      window = pg.gui.get_toplevel_window(widget)
+      window = gui_utils_.get_toplevel_window(widget)
     else:
       window = widget
 
     if (event.type != Gdk.EventType.WINDOW_STATE   # Safeguard, should not happen
         or window.get_window_type() != Gtk.WindowType.TOPLEVEL   # Popup windows
         or not (event.window_state.new_window_state & Gdk.WindowState.FOCUSED)):
-      if pg.gui.has_any_window_focus(windows_to_ignore=[window]):
+      if gui_utils_.has_any_window_focus(windows_to_ignore=[window]):
         self._previously_focused_on_related_window = True
       else:
         self._previously_focused_on_related_window = False
@@ -341,10 +343,10 @@ class PreviewsController:
     return True
 
   def _perform_full_preview_update(self):
-    pg.invocation.timeout_remove(self._name_preview.update)
+    utils.timeout_remove(self._name_preview.update)
 
-    pg.invocation.timeout_remove(self._update_image_preview)
-    pg.invocation.timeout_remove(self._image_preview.update)
+    utils.timeout_remove(self._update_image_preview)
+    utils.timeout_remove(self._image_preview.update)
 
     self._name_preview.update(full_update=True)
 
@@ -391,9 +393,9 @@ class PreviewsController:
 
     # There could be a rapid sequence of 'preview-selection-changed' signals
     # invoked if a selected item and preceding items are removed from the name
-    # preview due to not matching constraints. Therefore, we delay the image
+    # preview due to not matching conditions. Therefore, we delay the image
     # preview update when the selection changes.
-    pg.invocation.timeout_add_strict(
+    utils.timeout_add_strict(
       self._DELAY_IMAGE_PREVIEW_SELECTION_CHANGED_UPDATE_MILLISECONDS,
       self._update_image_preview,
       **dict(update_on_identical_item=False),
@@ -404,12 +406,12 @@ class PreviewsController:
       self._name_preview.collapsed_items)
 
   def _on_name_preview_added_items(self, _preview, _added_items):
-    pg.invocation.timeout_remove(self._name_preview.update)
+    utils.timeout_remove(self._name_preview.update)
 
     self._name_preview.update()
 
   def _on_name_preview_removed_items(self, _preview, _removed_items):
-    pg.invocation.timeout_remove(self._name_preview.update)
+    utils.timeout_remove(self._name_preview.update)
 
     self._name_preview.update()
 
@@ -443,14 +445,14 @@ class PreviewsController:
       # with a delay. We need to update the image preview immediately to
       # avoid a "glitch" when there is a very short time period displaying a
       # placeholder icon.
-      pg.invocation.timeout_remove(self._update_image_preview)
+      utils.timeout_remove(self._update_image_preview)
       self._update_image_preview()
     else:
       batcher = self._name_preview.batcher
       if item_key_to_display in batcher.item_tree:
         item = batcher.item_tree[item_key_to_display]
         if ((batcher.matching_items is not None and item in batcher.matching_items)
-            or item.type == pg.itemtree.TYPE_FOLDER):
+            or item.type == itemtree.TYPE_FOLDER):
           self._image_preview.item = item
 
       self._update_image_preview()
@@ -470,7 +472,7 @@ class PreviewsController:
     ]
     # Remove folders to avoid inserting tagged group items twice.
     self._settings['main/tagged_items'].set_value(
-      [item for item in tagged_items if item.type != pg.itemtree.TYPE_FOLDER])
+      [item for item in tagged_items if item.type != itemtree.TYPE_FOLDER])
 
     self._name_preview.set_tagged_items(set(item.key for item in tagged_items))
 

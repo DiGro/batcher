@@ -8,15 +8,16 @@ from gi.repository import Gimp
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-from src import builtin_procedures
+from src import builtin_actions
 from src import exceptions
 from src import overwrite
-from src import utils as utils_
+from src import utils_setting as utils_setting_
 
 from src.gui import messages as messages_
 from src.gui import overwrite_chooser as overwrite_chooser_
 from src.gui import progress_updater as progress_updater_
-from src.gui import utils as gui_utils_
+
+from . import _utils as gui_main_utils_
 
 
 class BatcherManager:
@@ -33,7 +34,7 @@ class BatcherManager:
         self,
         mode,
         item_type,
-        action_lists,
+        command_lists,
         previews,
         settings_manager,
         parent_widget,
@@ -49,13 +50,13 @@ class BatcherManager:
     previews.lock(self._PREVIEWS_BATCHER_RUN_KEY)
 
     try:
-      self._batcher.run(**utils_.get_settings_for_batcher(self._settings['main']))
+      self._batcher.run(**utils_setting_.get_settings_for_batcher(self._settings['main']))
     except exceptions.BatcherCancelError:
       should_quit = False
-    except exceptions.ActionError as e:
+    except exceptions.CommandError as e:
       should_quit = False
       messages_.display_failure_message(
-        messages_.get_failing_action_message(e),
+        messages_.get_failing_command_message(e),
         failure_message=str(e),
         details=e.traceback,
         parent=parent_widget)
@@ -77,7 +78,7 @@ class BatcherManager:
         previews.image_preview.update()
         previews.name_preview.update()
 
-      action_lists.set_warnings_and_deactivate_failed_actions(self._batcher)
+      command_lists.set_warnings_and_deactivate_failed_commands(self._batcher)
 
       self._batcher = None
 
@@ -100,10 +101,10 @@ class BatcherManager:
 
     progress_updater = progress_updater_.GtkProgressUpdater(progress_bar)
 
-    batcher = gui_utils_.get_batcher_class(item_type)(
+    batcher = gui_main_utils_.get_batcher_class(item_type)(
       item_tree=self._item_tree,
-      procedures=self._settings['main/procedures'],
-      constraints=self._settings['main/constraints'],
+      actions=self._settings['main/actions'],
+      conditions=self._settings['main/conditions'],
       edit_mode=mode == 'edit',
       initial_export_run_mode=Gimp.RunMode.INTERACTIVE,
       overwrite_chooser=overwrite_chooser,
@@ -138,7 +139,7 @@ class BatcherManagerQuick:
     try:
       self._batcher.run(
         item_tree=item_tree,
-        **utils_.get_settings_for_batcher(self._settings['main']))
+        **utils_setting_.get_settings_for_batcher(self._settings['main']))
     except exceptions.BatcherCancelError:
       pass
     except exceptions.BatcherError as e:
@@ -173,10 +174,10 @@ class BatcherManagerQuick:
 
     progress_updater = progress_updater_.GtkProgressUpdater(progress_bar)
 
-    batcher = gui_utils_.get_batcher_class(item_type)(
+    batcher = gui_main_utils_.get_batcher_class(item_type)(
       item_tree=self._item_tree,
-      procedures=self._settings['main/procedures'],
-      constraints=self._settings['main/constraints'],
+      actions=self._settings['main/actions'],
+      conditions=self._settings['main/conditions'],
       edit_mode=mode == 'edit',
       initial_export_run_mode=initial_export_run_mode,
       overwrite_chooser=overwrite_chooser,
@@ -189,7 +190,7 @@ class BatcherManagerQuick:
 
 def _get_interactive_overwrite_chooser(parent_widget):
   return overwrite_chooser_.GtkDialogOverwriteChooser(
-    builtin_procedures.INTERACTIVE_OVERWRITE_MODES,
+    builtin_actions.INTERACTIVE_OVERWRITE_MODES,
     default_value=overwrite.OverwriteModes.RENAME_NEW,
     default_response=overwrite.OverwriteModes.CANCEL,
     parent=parent_widget)

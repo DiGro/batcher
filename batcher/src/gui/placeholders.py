@@ -4,16 +4,15 @@ During processing, these placeholders are replaced with real objects.
 """
 
 import gi
-gi.require_version('GimpUi', '3.0')
-from gi.repository import GimpUi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
+from src import setting as setting_
+from src.gui import utils as gui_utils_
 
 
-class PlaceholdersComboBoxPresenter(pg.setting.GtkPresenter):
-  """`pygimplib.setting.presenter.Presenter` subclass for `Gtk.ComboBoxText`
+class PlaceholdersComboBoxPresenter(setting_.GtkPresenter):
+  """`setting.presenter.Presenter` subclass for `Gtk.ComboBoxText`
   representing `placeholders.Placeholder` instances.
   
   Value: `placeholders.Placeholder` instance selected in the combo box.
@@ -47,7 +46,7 @@ class PlaceholdersComboBoxPresenter(pg.setting.GtkPresenter):
     self._widget.set_active(self._placeholder_names_and_indexes[value])
 
 
-class UnsupportedParameterPresenter(pg.setting.GtkPresenter):
+class UnsupportedParameterPresenter(setting_.GtkPresenter):
 
   def __init__(self, *args, **kwargs):
     self._value = None
@@ -55,34 +54,10 @@ class UnsupportedParameterPresenter(pg.setting.GtkPresenter):
     super().__init__(*args, **kwargs)
 
   def _create_widget(self, setting, **kwargs):
-    return create_placeholder_widget()
+    return gui_utils_.create_placeholder_widget()
 
   def get_value(self):
     return self._value
 
   def _set_value(self, value):
     self._value = value
-
-
-def create_placeholder_widget(spacing=5):
-  hbox = Gtk.Box(
-    orientation=Gtk.Orientation.HORIZONTAL,
-    spacing=spacing,
-  )
-
-  hbox.pack_start(
-    Gtk.Image.new_from_icon_name(GimpUi.ICON_DIALOG_WARNING, Gtk.IconSize.BUTTON),
-    False,
-    False,
-    0)
-
-  label = Gtk.Label(
-    use_markup=True,
-    label=_('Cannot be modified'),
-    xalign=0.0,
-    yalign=0.5,
-  )
-
-  hbox.pack_start(label, False, False, 0)
-
-  return hbox

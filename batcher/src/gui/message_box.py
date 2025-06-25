@@ -7,14 +7,15 @@ from gi.repository import GObject
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
+from config import CONFIG
+from src import setting as setting_
 from src.gui import messages
+from src.gui import utils as gui_utils_
 
 
 class SettingValueNotValidMessageBox(Gtk.Box):
   """Class displaying a button containing warnings if an invalid value was
-  assigned to any `pygimplib.Setting` instance.
+  assigned to any `setting.Setting` instance.
   """
 
   def __init__(self, message_type=Gtk.MessageType.WARNING, *args, **kwargs):
@@ -69,8 +70,8 @@ class SettingValueNotValidMessageBox(Gtk.Box):
     message_contents = f'\n{"=" * 80}\n'.join(message_contents_list)
 
     messages.display_alert_message(
-      title=pg.config.PLUGIN_TITLE,
-      parent=pg.gui.get_toplevel_window(self),
+      title=CONFIG.PLUGIN_TITLE,
+      parent=gui_utils_.get_toplevel_window(self),
       message_type=self._message_type,
       message_markup=_('The plug-in encountered one or more errors.'),
       message_secondary_markup=_(
@@ -80,15 +81,15 @@ class SettingValueNotValidMessageBox(Gtk.Box):
       report_description=_(
         'You can help fix these errors by sending a report with the text'
         ' in the details above to one of the following sites'),
-      report_uri_list=pg.config.BUG_REPORT_URL_LIST,
+      report_uri_list=CONFIG.BUG_REPORT_URL_LIST,
     )
 
   def _set_up_setting_value_not_valid_handler(self):
-    pg.setting.Setting.connect_event_global('value-not-valid', self._on_setting_value_not_valid)
+    setting_.Setting.connect_event_global('value-not-valid', self._on_setting_value_not_valid)
 
   def _on_setting_value_not_valid(self, setting, message, _message_id, details):
-    if (pg.config.WARN_ON_INVALID_SETTING_VALUES
-        and setting not in pg.config.SETTINGS_FOR_WHICH_TO_SUPPRESS_WARNINGS_ON_INVALID_VALUE):
+    if (CONFIG.WARN_ON_INVALID_SETTING_VALUES
+        and setting not in CONFIG.SETTINGS_FOR_WHICH_TO_SUPPRESS_WARNINGS_ON_INVALID_VALUE):
       self.add_message(setting, message, details)
 
 

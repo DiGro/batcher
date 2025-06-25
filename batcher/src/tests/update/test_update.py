@@ -1,10 +1,11 @@
 import unittest
 import unittest.mock as mock
 
-import pygimplib as pg
-from pygimplib.tests import stubs_gimp
-
+from config import CONFIG
+from src import setting as setting_
 from src import update
+
+from src.tests import stubs_gimp
 
 
 def _update_to_0_3(data, _settings, _procedure_groups):
@@ -25,16 +26,14 @@ _UPDATE_HANDLERS = {
 }
 
 
+@mock.patch('src.setting.sources.Gimp', new_callable=stubs_gimp.GimpModuleStub)
 @mock.patch(
-  f'{pg.utils.get_pygimplib_module_path()}.setting.sources.Gimp',
-  new_callable=stubs_gimp.GimpModuleStub)
-@mock.patch(
-  'batcher.src.tests.update.test_update.update._UPDATE_HANDLERS',
+  'src.tests.update.test_update.update._UPDATE_HANDLERS',
   new_callable=lambda: dict(_UPDATE_HANDLERS))
 class TestUpdate(unittest.TestCase):
   
   def setUp(self):
-    self.settings = pg.setting.create_groups({
+    self.settings = setting_.create_groups({
       'name': 'all_settings',
       'groups': [
         {
@@ -43,7 +42,7 @@ class TestUpdate(unittest.TestCase):
       ]
     })
 
-    self.orig_config_version = pg.config.PLUGIN_VERSION
+    self.orig_config_version = CONFIG.PLUGIN_VERSION
 
     self.current_version = '1.0'
     
@@ -64,7 +63,7 @@ class TestUpdate(unittest.TestCase):
       },
     ])
 
-    self.source = pg.setting.SimpleInMemorySource('test_settings')
+    self.source = setting_.SimpleInMemorySource('test_settings')
 
     self.source.data = [
       {
@@ -98,10 +97,10 @@ class TestUpdate(unittest.TestCase):
     self._spy_on_source(self.source)
 
   def tearDown(self):
-    pg.config.PLUGIN_VERSION = self.orig_config_version
+    CONFIG.PLUGIN_VERSION = self.orig_config_version
   
   def test_fresh_start_saves_all_settings(self, *mocks):
-    source = pg.setting.Persistor.get_default_setting_sources()['persistent']
+    source = setting_.Persistor.get_default_setting_sources()['persistent']
 
     self.assertFalse(source.has_data())
 
@@ -117,7 +116,7 @@ class TestUpdate(unittest.TestCase):
     source.clear.assert_called_once()
 
   def test_fresh_start_without_updating_sources(self, *mocks):
-    source = pg.setting.Persistor.get_default_setting_sources()['persistent']
+    source = setting_.Persistor.get_default_setting_sources()['persistent']
 
     self.assertFalse(source.has_data())
 
@@ -306,4 +305,4 @@ class TestUpdate(unittest.TestCase):
 
   @staticmethod
   def set_current_version(version):
-    pg.config.PLUGIN_VERSION = version
+    CONFIG.PLUGIN_VERSION = version

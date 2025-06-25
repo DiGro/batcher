@@ -11,19 +11,17 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import Pango
 
-import pygimplib as pg
-
-from src.procedure_groups import *
-
+from config import CONFIG
+from src import setting as setting_
 from src.gui import message_box as message_box_
 from src.gui import message_label as message_label_
 from src.gui import messages as messages_
-
-from src.gui.main import action_lists as action_lists_
+from src.gui.main import command_lists as command_lists_
 from src.gui.main import batcher_manager as batcher_manager_
 from src.gui.main import export_settings as export_settings_
 from src.gui.main import previews as previews_
 from src.gui.main import settings_manager as settings_manager_
+from src.procedure_groups import *
 
 
 class BatchProcessingGui:
@@ -79,15 +77,15 @@ class BatchProcessingGui:
     return self._previews.image_preview
 
   @property
-  def procedure_list(self):
-    return self._action_lists.procedure_list
+  def action_list(self):
+    return self._command_lists.action_list
 
   @property
-  def constraint_list(self):
-    return self._action_lists.constraint_list
+  def condition_list(self):
+    return self._command_lists.condition_list
 
   def _init_gui(self):
-    self._dialog = GimpUi.Dialog(title=self._title, role=pg.config.PLUGIN_NAME)
+    self._dialog = GimpUi.Dialog(title=self._title, role=CONFIG.PLUGIN_NAME)
     if self._settings['gui/size/dialog_size'].value:
       self._dialog.set_default_size(*self._settings['gui/size/dialog_size'].value)
     self._dialog.set_default_response(Gtk.ResponseType.CANCEL)
@@ -112,7 +110,7 @@ class BatchProcessingGui:
       self._item_tree,
       previews_top_label,
       lock_previews=True,
-      manage_items=pg.config.PROCEDURE_GROUP == CONVERT_GROUP,
+      manage_items=CONFIG.PROCEDURE_GROUP == CONVERT_GROUP,
       display_message_func=self._display_inline_message,
       current_image=self._current_image,
     )
@@ -129,7 +127,7 @@ class BatchProcessingGui:
     else:
       self._export_settings = None
 
-    self._action_lists = action_lists_.ActionLists(
+    self._command_lists = command_lists_.CommandLists(
       self._settings,
       self._dialog,
     )
@@ -139,8 +137,8 @@ class BatchProcessingGui:
       spacing=self._VBOX_SETTINGS_SPACING,
     )
 
-    self._vbox_settings.pack_start(self._action_lists.vbox_procedures, False, False, 0)
-    self._vbox_settings.pack_start(self._action_lists.vbox_constraints, False, False, 0)
+    self._vbox_settings.pack_start(self._command_lists.vbox_actions, False, False, 0)
+    self._vbox_settings.pack_start(self._command_lists.vbox_conditions, False, False, 0)
 
     self._hpaned_settings_and_previews = Gtk.Paned(
       orientation=Gtk.Orientation.HORIZONTAL,
@@ -152,7 +150,7 @@ class BatchProcessingGui:
     self._button_run = self._dialog.add_button('', Gtk.ResponseType.OK)
     self._button_run.set_can_default(True)
     self._button_run.hide()
-    if self._mode == 'export' and pg.config.PROCEDURE_GROUP != CONVERT_GROUP:
+    if self._mode == 'export' and CONFIG.PROCEDURE_GROUP != CONVERT_GROUP:
       self._button_run.set_label(_('_Export'))
     else:
       self._button_run.set_label(_('_Run'))
@@ -221,7 +219,7 @@ class BatchProcessingGui:
     self._dialog.connect('key-press-event', self._on_dialog_key_press_event)
     self._dialog.connect('delete-event', self._on_dialog_delete_event)
 
-    self._previews.connect_events(self._action_lists, self._hpaned_settings_and_previews)
+    self._previews.connect_events(self._command_lists, self._hpaned_settings_and_previews)
 
   def _finish_init_and_show(self):
     self._previews.controller.initialize_inputs_in_name_preview()
@@ -233,7 +231,7 @@ class BatchProcessingGui:
     if self._mode == 'export':
       self._dialog.set_focus(self._export_settings.file_extension_entry)
     else:
-      self._dialog.set_focus(self._action_lists.procedure_list.button_add)
+      self._dialog.set_focus(self._command_lists.action_list.button_add)
 
     self._button_run.grab_default()
 
@@ -264,13 +262,13 @@ class BatchProcessingGui:
     self._settings.initialize_gui(
       {
         'gui/size/dialog_position': dict(
-          gui_type=pg.setting.SETTING_GUI_TYPES.window_position,
+          gui_type=setting_.SETTING_GUI_TYPES.window_position,
           widget=self._dialog),
         'gui/size/dialog_size': dict(
-          gui_type=pg.setting.SETTING_GUI_TYPES.window_size,
+          gui_type=setting_.SETTING_GUI_TYPES.window_size,
           widget=self._dialog),
         'gui/size/paned_outside_previews_position': dict(
-          gui_type=pg.setting.SETTING_GUI_TYPES.paned_position,
+          gui_type=setting_.SETTING_GUI_TYPES.paned_position,
           widget=self._hpaned_settings_and_previews),
       },
       only_null=True,
@@ -284,7 +282,7 @@ class BatchProcessingGui:
     should_quit = self._batcher_manager.run_batcher(
       self._mode,
       self._item_type,
-      self._action_lists,
+      self._command_lists,
       self._previews,
       self._settings_manager,
       self._dialog,
@@ -299,8 +297,8 @@ class BatchProcessingGui:
   def _set_up_gui_before_run(self):
     self._display_inline_message(None)
 
-    self._action_lists.reset_action_tooltips_and_indicators()
-    self._action_lists.close_action_edit_dialogs()
+    self._command_lists.reset_command_tooltips_and_indicators()
+    self._command_lists.close_command_edit_dialogs()
 
     self._set_gui_enabled(False)
 
@@ -360,8 +358,8 @@ class BatchProcessingGui:
   def _get_help_button(reference_button):
     button_help = Gtk.LinkButton(
       uri=(
-        pg.config.LOCAL_DOCS_PATH if os.path.isfile(pg.config.LOCAL_DOCS_PATH)
-        else pg.config.DOCS_URL),
+        CONFIG.LOCAL_DOCS_PATH if os.path.isfile(CONFIG.LOCAL_DOCS_PATH)
+        else CONFIG.DOCS_URL),
       label=_('_Help'),
       use_underline=True,
     )
@@ -435,7 +433,7 @@ class BatchProcessingQuickGui:
     return self._dialog
 
   def _init_gui(self):
-    self._dialog = GimpUi.Dialog(title=self._title, role=pg.config.PLUGIN_NAME)
+    self._dialog = GimpUi.Dialog(title=self._title, role=CONFIG.PLUGIN_NAME)
     self._dialog.set_border_width(self._BORDER_WIDTH)
     self._dialog.set_default_size(self._DEFAULT_DIALOG_WIDTH, -1)
 
@@ -462,7 +460,7 @@ class BatchProcessingQuickGui:
 
       self._dialog.vbox.pack_start(self._check_button_show_this_dialog, False, False, 0)
 
-      if self._mode == 'export' and pg.config.PROCEDURE_GROUP != CONVERT_GROUP:
+      if self._mode == 'export' and CONFIG.PROCEDURE_GROUP != CONVERT_GROUP:
         button_run_label = _('_Export')
       else:
         button_run_label = _('_Run')
@@ -501,10 +499,10 @@ class BatchProcessingQuickGui:
         self._settings['main/export'],
       ])
 
-    # Save only select settings as e.g. constraints are modified by Export/Edit
-    # Selected Layers. We cannot use 'ignore_save' on procedures or constraints
+    # Save only select settings as e.g. conditions are modified by Export/Edit
+    # Selected Layers. We cannot use 'ignore_save' on actions or conditions
     # as that would save empty groups, effectively erasing them.
-    pg.setting.Persistor.save(settings_to_save)
+    setting_.Persistor.save(settings_to_save)
 
     Gtk.main_quit()
 

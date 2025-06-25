@@ -14,14 +14,15 @@ from gi.repository import GObject
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
 from . import base as preview_base_
 
+from src import builtin_actions
 from src import exceptions
-from src import export as export_
-from src import utils as utils_
+from src import itemtree
+from src import utils
+from src import utils_setting as utils_setting_
 from src.gui import messages as messages_
+from src.gui import utils as gui_utils_
 
 
 class NamePreview(preview_base_.Preview):
@@ -91,7 +92,7 @@ class NamePreview(preview_base_.Preview):
     
     # key: `Item.key`
     # value: `Gtk.TreeIter` instance
-    self._tree_iters = collections.defaultdict(pg.utils.return_none_func)
+    self._tree_iters = collections.defaultdict(utils.return_none_func)
     
     self._row_expand_collapse_interactive = True
     self._clearing_preview = False
@@ -157,7 +158,7 @@ class NamePreview(preview_base_.Preview):
 
   def set_sensitive(self, sensitive):
     # Functions created via GObject introspection are not hashable, causing
-    # functions in `pg.invocation` to fail. We therefore wrap this function to
+    # `utils.timeout_add_strict()` to fail. We therefore wrap this function to
     # avoid the error.
     super().set_sensitive(sensitive)
 
@@ -282,7 +283,8 @@ class NamePreview(preview_base_.Preview):
     self._tree_view.get_selection().connect('changed', self._on_tree_selection_changed)
   
   def _init_icons(self):
-    self._folder_icon = pg.gui.utils.get_icon_pixbuf('folder', self._tree_view, Gtk.IconSize.MENU)
+    self._folder_icon = gui_utils_.get_icon_pixbuf(
+      'folder', self._tree_view, Gtk.IconSize.MENU)
 
     # Colors taken from:
     #  https://gitlab.gnome.org/GNOME/gimp/-/blob/master/app/widgets/gimpwidgets-utils.c
@@ -302,7 +304,7 @@ class NamePreview(preview_base_.Preview):
       self._color_tags_and_icons}
 
   def _get_color_tag_pixbuf(self, color_tag):
-    if color_tag != Gimp.ColorTag.NONE and color_tag in pg.utils.get_enum_values(Gimp.ColorTag):
+    if color_tag != Gimp.ColorTag.NONE and color_tag in utils.get_enum_values(Gimp.ColorTag):
       icon_size = Gtk.icon_size_lookup(Gtk.IconSize.MENU)
 
       color_tag_pixbuf = GdkPixbuf.Pixbuf.new(
@@ -365,7 +367,7 @@ class NamePreview(preview_base_.Preview):
     # The performance hit of doing this is negligible.
     for item in self._batcher.item_tree.iter_all():
       item.reset()
-      item.delete_named_state(export_.EXPORT_NAME_ITEM_STATE)
+      item.delete_named_state(builtin_actions.EXPORT_NAME_ITEM_STATE)
 
     error = None
 
@@ -376,15 +378,15 @@ class NamePreview(preview_base_.Preview):
         process_contents=False,
         process_names=True,
         process_export=False,
-        **utils_.get_settings_for_batcher(self._settings['main']))
+        **utils_setting_.get_settings_for_batcher(self._settings['main']))
     except exceptions.BatcherCancelError:
       pass
-    except exceptions.ActionError as e:
+    except exceptions.CommandError as e:
       messages_.display_failure_message(
-        messages_.get_failing_action_message(e),
+        messages_.get_failing_command_message(e),
         failure_message=str(e),
         details=e.traceback,
-        parent=pg.gui.get_toplevel_window(self))
+        parent=gui_utils_.get_toplevel_window(self))
       
       error = e
     except Exception as e:
@@ -392,7 +394,7 @@ class NamePreview(preview_base_.Preview):
         _('There was a problem with updating the name preview:'),
         failure_message=str(e),
         details=traceback.format_exc(),
-        parent=pg.gui.get_toplevel_window(self))
+        parent=gui_utils_.get_toplevel_window(self))
       
       error = e
     
@@ -413,7 +415,7 @@ class NamePreview(preview_base_.Preview):
 
     for item in item_tree_items:
       # We also explicitly insert parents as they would be omitted due to not
-      # matching constraints.
+      # matching conditions.
       for parent_item in item.parents:
         if parent_item not in visited_parents:
           items[parent_item.key] = parent_item
@@ -458,7 +460,7 @@ class NamePreview(preview_base_.Preview):
           # works within the same parent. Hence, we remove and insert the
           # item under a new parent.
 
-          if new_item.type != pg.itemtree.TYPE_FOLDER:
+          if new_item.type != itemtree.TYPE_FOLDER:
             self._remove_item_by_key(new_item_key)
           else:
             # We cannot remove a parent from the `Gtk.TreeStore` at this
@@ -532,7 +534,7 @@ class NamePreview(preview_base_.Preview):
     return tree_iter
 
   def _expand_folder_item(self, tree_iter, item):
-    if tree_iter is not None and item.type == pg.itemtree.TYPE_FOLDER:
+    if tree_iter is not None and item.type == itemtree.TYPE_FOLDER:
       self._row_expand_collapse_interactive = False
       self._tree_view.expand_row(self._tree_model[tree_iter].path, True)
       self._row_expand_collapse_interactive = True
@@ -569,7 +571,7 @@ class NamePreview(preview_base_.Preview):
       ])
 
   def _get_icon_from_item(self, item):
-    if item.type == pg.itemtree.TYPE_FOLDER:
+    if item.type == itemtree.TYPE_FOLDER:
       return self._folder_icon
     else:
       return None
@@ -588,7 +590,7 @@ class NamePreview(preview_base_.Preview):
   def _get_item_name(self, item):
     if not self._show_original_name:
       if not self._batcher.edit_mode:
-        item_state = item.get_named_state(export_.EXPORT_NAME_ITEM_STATE)
+        item_state = item.get_named_state(builtin_actions.EXPORT_NAME_ITEM_STATE)
         return item_state['name'] if item_state is not None else item.name
       else:
         return item.name

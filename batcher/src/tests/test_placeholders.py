@@ -8,10 +8,11 @@ from gi.repository import GObject
 
 import parameterized
 
-import pygimplib as pg
-from pygimplib.tests import stubs_gimp
-
+from config import CONFIG
 from src import placeholders as placeholders_
+from src import setting as setting_
+
+from src.tests import stubs_gimp
 
 
 class _BatcherStub:
@@ -46,7 +47,7 @@ class TestGetReplacedArg(unittest.TestCase):
     with self.assertRaises(ValueError):
       # noinspection PyTypeChecker
       placeholders_.get_replaced_value(
-        pg.setting.StringSetting('placeholder', default_value='invalid_placeholder'), batcher)
+        setting_.StringSetting('placeholder', default_value='invalid_placeholder'), batcher)
 
 
 class TestGetPlaceholderNameFromPdbType(unittest.TestCase):
@@ -67,9 +68,7 @@ class TestGetPlaceholderNameFromPdbType(unittest.TestCase):
   def test_with_invalid_object_type(self):
     self.assertIsNone(placeholders_.get_placeholder_type_name_from_pdb_type(object))
 
-  @mock.patch(
-    f'{pg.utils.get_pygimplib_module_path()}.setting.settings.Gimp',
-    new_callable=stubs_gimp.GimpModuleStub)
+  @mock.patch('src.setting.settings._array.Gimp', new_callable=stubs_gimp.GimpModuleStub)
   def test_with_layer_array(self, _mock_gimp):
     param = stubs_gimp.GParamStub(
       GObject.GType.from_name('GimpCoreObjectArray'), 'layers', object_type=Gimp.Layer.__gtype__)
@@ -81,9 +80,7 @@ class TestGetPlaceholderNameFromPdbType(unittest.TestCase):
       'placeholder_layer_array',
     )
 
-  @mock.patch(
-    f'{pg.utils.get_pygimplib_module_path()}.setting.settings.Gimp',
-    new_callable=stubs_gimp.GimpModuleStub)
+  @mock.patch('src.setting.settings._array.Gimp', new_callable=stubs_gimp.GimpModuleStub)
   def test_image_array_is_unsupported(self, _mock_gimp):
     param = stubs_gimp.GParamStub(
       GObject.GType.from_name('GimpCoreObjectArray'), 'images', object_type=Gimp.Image.__gtype__)
@@ -95,23 +92,33 @@ class TestGetPlaceholderNameFromPdbType(unittest.TestCase):
 
 
 class TestPlaceholderSetting(unittest.TestCase):
-  
+
+  @classmethod
+  def setUpClass(cls):
+    cls.orig_warn_on_invalid_setting_values = CONFIG.WARN_ON_INVALID_SETTING_VALUES
+
+    CONFIG.WARN_ON_INVALID_SETTING_VALUES = False
+
+  @classmethod
+  def tearDownClass(cls):
+    CONFIG.WARN_ON_INVALID_SETTING_VALUES = cls.orig_warn_on_invalid_setting_values
+
   @parameterized.parameterized.expand([
     ('placeholder', placeholders_.PlaceholderSetting, []),
     ('image_placeholder', placeholders_.PlaceholderImageSetting, ['current_image']),
   ])
   def test_get_placeholder_names(
-        self, test_case_suffix, placeholder_setting_type, expected_result):
+        self, _test_case_suffix, placeholder_setting_type, expected_result):
     placeholder_setting = placeholder_setting_type('setting')
     self.assertListEqual(
       placeholder_setting.get_placeholder_names(), expected_result)
-  
+
   @parameterized.parameterized.expand([
     ('placeholder', placeholders_.PlaceholderSetting, 0),
     ('image_placeholder', placeholders_.PlaceholderImageSetting, 1),
   ])
   def test_get_placeholders(
-        self, test_case_suffix, placeholder_setting_type, expected_length):
+        self, _test_case_suffix, placeholder_setting_type, expected_length):
     placeholder_setting = placeholder_setting_type('setting')
     self.assertEqual(len(placeholder_setting.get_placeholders()), expected_length)
 

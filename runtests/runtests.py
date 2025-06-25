@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """Running automated tests.
 
 By default, all modules starting with the `'test_'` prefix will be run.
@@ -34,19 +32,17 @@ from gi.repository import Gimp
 from gi.repository import Gio
 from gi.repository import GObject
 
-PLUGIN_DIRPATH = os.path.dirname(os.path.dirname(os.path.abspath(
-  inspect.getfile(inspect.currentframe()))))
+MODULE_DIRPATH = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+ROOT_DIRPATH = os.path.dirname(MODULE_DIRPATH)
+PLUGIN_DIRPATH = os.path.join(ROOT_DIRPATH, 'batcher')
+
 if PLUGIN_DIRPATH not in sys.path:
   sys.path.append(PLUGIN_DIRPATH)
 
-from batcher import pygimplib as pg
+from src import procedure as procedure_
+from src import utils
 
-
-_CURRENT_MODULE_DIRPATH = os.path.dirname(os.path.abspath(pg.utils.get_current_module_filepath()))
-_ROOT_DIRPATH = os.path.join(os.path.dirname(_CURRENT_MODULE_DIRPATH), 'batcher')
-
-if _ROOT_DIRPATH not in sys.path:
-  sys.path.append(_ROOT_DIRPATH)
+utils.initialize_i18n()
 
 
 def plug_in_run_tests(
@@ -55,7 +51,7 @@ def plug_in_run_tests(
       _data: Optional[bytes],
 ):
   run_tests(
-    config.get_property('dirpath'),
+    config.get_property('directory'),
     config.get_property('prefix'),
     config.get_property('modules'),
     config.get_property('ignored-modules'),
@@ -65,14 +61,14 @@ def plug_in_run_tests(
 
 
 def run_tests(
-      dirpath: str,
+      directory: Gio.File,
       test_module_name_prefix: str = 'test_',
       modules: Optional[List[str]] = None,
       ignored_modules: Optional[List[str]] = None,
       output_stream: str = 'stderr',
       verbose: bool = False,
 ):
-  """Runs all modules containing tests located in the specified directory path.
+  """Runs all modules containing tests located in the specified directory.
 
   Modules containing tests are considered those that contain the
   ``test_module_name_prefix`` prefix.
@@ -95,7 +91,7 @@ def run_tests(
 
   if not ignored_modules:
     ignored_modules = []
-  
+
   if not modules:
     should_append = (
       lambda name: not any(name.startswith(ignored_module) for ignored_module in ignored_modules))
@@ -105,10 +101,11 @@ def run_tests(
         any(name.startswith(module_) for module_ in modules)
         and not any(name.startswith(ignored_module) for ignored_module in ignored_modules)))
 
-  for importer, module_name, is_package in pkgutil.walk_packages(path=[dirpath]):
+  for importer, module_name, is_package in pkgutil.walk_packages(path=[directory.get_path()]):
     if should_append(module_name):
       if is_package:
-        sys.path.append(importer.path)
+        if importer.path not in sys.path:
+          sys.path.append(importer.path)
 
       module_names.append(module_name)
 
@@ -191,7 +188,7 @@ class _Stream:
     pass
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_run_tests,
   procedure_type=Gimp.Procedure,
   arguments=[
@@ -206,7 +203,7 @@ pg.register_procedure(
     ],
     [
       'file',
-      'dirpath',
+      'directory',
       '_Directory',
       'Directory path containing test modules',
       Gimp.FileChooserAction.SELECT_FOLDER,
@@ -257,4 +254,4 @@ pg.register_procedure(
 )
 
 
-pg.main()
+procedure_.main()

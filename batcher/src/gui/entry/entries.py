@@ -12,15 +12,13 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import Pango
 
-import pygimplib as pg
-
 from . import expander as entry_expander_
 from . import popup as entry_popup_
 from . import undo as entry_undo_
 
 from src import file_formats as file_formats_
-from src.gui import cell_renderers as cell_renderers_
-from src.gui import popup_hide_context as popup_hide_context_
+from src.gui import utils as gui_utils_
+from src.gui import widgets as gui_widgets_
 from src.path import pattern as pattern_
 
 
@@ -95,7 +93,7 @@ class ExtendedEntry(Gtk.Entry, Gtk.Editable):
 
   @property
   def undo_context(self) -> entry_undo_.EntryUndoContext:
-    """`entry_undo.EntryUndoContext` instance to handle undo/redo actions."""
+    """`entry_undo.EntryUndoContext` instance to handle undo/redo steps."""
     return self._undo_context
 
   # HACK: Instead of connecting an 'insert-text' signal handler, we override the
@@ -271,7 +269,7 @@ class NamePatternEntry(ExtendedEntry):
     
     self._add_columns()
 
-    self._field_tooltip_hide_context = popup_hide_context_.PopupHideContext(
+    self._field_tooltip_hide_context = gui_widgets_.PopupHideContext(
       self._field_tooltip_window,
       self,
       widgets_to_exclude_from_triggering_hiding=[
@@ -378,7 +376,7 @@ class NamePatternEntry(ExtendedEntry):
     self._update_window_position(self._field_tooltip_window)
   
   def _update_window_position(self, tooltip_window):
-    absolute_entry_position = pg.gui.utils.get_absolute_widget_position(self)
+    absolute_entry_position = gui_utils_.get_absolute_widget_position(self)
 
     if absolute_entry_position is not None:
       y = absolute_entry_position[1] - tooltip_window.get_allocation().height
@@ -393,7 +391,7 @@ class NamePatternEntry(ExtendedEntry):
     self._hide_field_tooltip()
 
   def _on_name_pattern_entry_realize(self, entry):
-    self._field_tooltip_window.set_transient_for(pg.gui.utils.get_toplevel_window(self))
+    self._field_tooltip_window.set_transient_for(gui_utils_.get_toplevel_window(self))
 
   def _filter_suggested_items(self, suggested_items, row_iter, data=None):
     item = suggested_items[row_iter][self._COLUMN_ITEMS_TO_INSERT]
@@ -556,7 +554,7 @@ class FileExtensionEntry(ExtendedEntry):
       ))
     
     self._cell_renderer_description = Gtk.CellRendererText()
-    self._cell_renderer_extensions = cell_renderers_.CellRendererTextList()
+    self._cell_renderer_extensions = gui_widgets_.CellRendererTextList()
     _add_column(self._cell_renderer_description, 'text', self._COLUMN_DESCRIPTION)
     _add_column(self._cell_renderer_extensions, 'markup-list', self._COLUMN_EXTENSIONS)
   

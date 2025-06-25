@@ -6,28 +6,20 @@ gi.require_version('Gimp', '3.0')
 from gi.repository import Gimp
 from gi.repository import GObject
 
-import pygimplib as pg
-from pygimplib.tests import stubs_gimp
-
+from src import setting as setting_
 from src import settings_from_pdb as settings_from_pdb_
 from src import placeholders as placeholders_
+from src import pypdb
+
+from src.tests import stubs_gimp
 
 
-@mock.patch(
-  f'{pg.utils.get_pygimplib_module_path()}.setting.settings.Gimp',
-  new_callable=stubs_gimp.GimpModuleStub,
-)
-@mock.patch(
-  f'{pg.utils.get_pygimplib_module_path()}.pypdb.Gimp.get_pdb',
-  return_value=pg.tests.stubs_gimp.PdbStub,
-)
+@mock.patch('src.setting.settings._gimp_objects.Gimp', new_callable=stubs_gimp.GimpModuleStub)
+@mock.patch('src.pypdb.Gimp.get_pdb', return_value=stubs_gimp.PdbStub)
 class TestGetSettingDataFromPdbProcedure(unittest.TestCase):
 
-  @mock.patch(
-    f'{pg.utils.get_pygimplib_module_path()}.pypdb.Gimp.get_pdb',
-    return_value=pg.tests.stubs_gimp.PdbStub,
-  )
-  def setUp(self, mock_get_pdb):
+  @mock.patch('src.pypdb.Gimp.get_pdb', return_value=stubs_gimp.PdbStub)
+  def setUp(self, *_mocks):
     self.procedure_name = 'file-png-export'
 
     self.procedure_stub_kwargs = dict(
@@ -69,7 +61,7 @@ class TestGetSettingDataFromPdbProcedure(unittest.TestCase):
     procedure, procedure_name, arguments = settings_from_pdb_.get_setting_data_from_pdb_procedure(
       extended_procedure_stub.get_name())
 
-    self.assertIsInstance(procedure, pg.pypdb.PDBProcedure)
+    self.assertIsInstance(procedure, pypdb.PDBProcedure)
     self.assertEqual(procedure_name, self.procedure_name)
 
     self.maxDiff = None
@@ -79,7 +71,7 @@ class TestGetSettingDataFromPdbProcedure(unittest.TestCase):
       [
         {
           'name': 'run-mode',
-          'type': pg.setting.EnumSetting,
+          'type': setting_.EnumSetting,
           'default_value': Gimp.RunMode.NONINTERACTIVE,
           'enum_type': (procedure, procedure.arguments[0]),
           'display_name': 'The run mode',
@@ -87,31 +79,31 @@ class TestGetSettingDataFromPdbProcedure(unittest.TestCase):
         {
           'name': 'drawables',
           'type': placeholders_.PlaceholderDrawableArraySetting,
-          'element_type': pg.setting.DrawableSetting,
+          'element_type': setting_.DrawableSetting,
           'display_name': 'Drawables',
         },
         {
           'name': 'filename',
-          'type': pg.setting.StringSetting,
+          'type': setting_.StringSetting,
           'pdb_type': GObject.TYPE_STRING,
           'display_name': 'Filename to save the image in',
         },
         {
           'name': 'drawables-2',
           'type': placeholders_.PlaceholderDrawableArraySetting,
-          'element_type': pg.setting.DrawableSetting,
+          'element_type': setting_.DrawableSetting,
           'display_name': 'More drawables',
         },
         {
           'name': 'filename-2',
-          'type': pg.setting.StringSetting,
+          'type': setting_.StringSetting,
           'pdb_type': GObject.TYPE_STRING,
           'display_name': 'Another filename',
         },
         {
           'name': 'brushes',
-          'type': pg.setting.ArraySetting,
-          'element_type': pg.setting.StringSetting,
+          'type': setting_.ArraySetting,
+          'element_type': setting_.StringSetting,
           'display_name': 'Brush names',
         },
       ]

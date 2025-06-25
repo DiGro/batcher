@@ -9,25 +9,27 @@ gi.require_version('Gimp', '3.0')
 from gi.repository import Gimp
 from gi.repository import Gio
 
-import pygimplib as pg
-from pygimplib import pdb
-
-from src import actions as actions_
-from src import builtin_constraints
-from src import builtin_procedures
-from src import setting_classes as setting_classes_
+from config import CONFIG
+from src import builtin_actions
+from src import builtin_conditions
+from src import commands as commands_
+from src import itemtree
+from src import setting as setting_
+from src import setting_additional as setting_additional_
 from src import utils as utils_
+from src import utils_setting as utils_setting_
 from src import version as version_
 from src.path import pattern as pattern_
 from src.path import uniquify
 from src.procedure_groups import *
+from src.pypdb import pdb
 
 _UPDATE_STATUSES = FRESH_START, UPDATE, TERMINATE = 0, 1, 2
 
 
 def load_and_update(
-      settings: pg.setting.Group,
-      sources: Optional[Dict[str, Union[pg.setting.Source, List[pg.setting.Source]]]] = None,
+      settings: setting_.Group,
+      sources: Optional[Dict[str, Union[setting_.Source, List[setting_.Source]]]] = None,
       update_sources: bool = True,
       procedure_group: Optional[str] = None,
 ) -> Tuple[int, str]:
@@ -61,7 +63,7 @@ def load_and_update(
   def _handle_update(data):
     nonlocal current_version, previous_version
 
-    current_version = version_.Version.parse(pg.config.PLUGIN_VERSION)
+    current_version = version_.Version.parse(CONFIG.PLUGIN_VERSION)
 
     previous_version = _get_plugin_version(data)
     _update_plugin_version(data, current_version)
@@ -70,7 +72,7 @@ def load_and_update(
       return data
 
     if previous_version is None:
-      raise pg.setting.SourceModifyDataError(_('Failed to obtain the previous plug-in version.'))
+      raise setting_.SourceModifyDataError(_('Failed to obtain the previous plug-in version.'))
 
     for version_str, update_handler in _UPDATE_HANDLERS.items():
       if previous_version < version_.Version.parse(version_str) <= current_version:
@@ -79,10 +81,10 @@ def load_and_update(
     return data
 
   if sources is None:
-    sources = pg.setting.Persistor.get_default_setting_sources()
+    sources = setting_.Persistor.get_default_setting_sources()
 
   if procedure_group is None:
-    procedure_groups = PROCEDURE_GROUPS
+    procedure_groups = ALL_PROCEDURE_GROUPS
   else:
     procedure_groups = [procedure_group]
 
@@ -105,9 +107,9 @@ def load_and_update(
     # completely.
     return TERMINATE, traceback.format_exc()
 
-  load_message = utils_.format_message_from_persistor_statuses(load_result)
+  load_message = utils_setting_.format_message_from_persistor_statuses(load_result)
 
-  if any(status == pg.setting.Persistor.FAIL
+  if any(status == setting_.Persistor.FAIL
          for status in load_result.statuses_per_source.values()):
     return TERMINATE, load_message
 
@@ -181,6 +183,14 @@ def _get_child_group_list(group_list, name):
   return None, None
 
 
+def _get_child_group_dict(group_list, name):
+  for index, dict_ in enumerate(group_list):
+    if 'settings' in dict_ and dict_['name'] == name:
+      return dict_, index
+
+  return None, None
+
+
 def _get_child_setting(group_list, name):
   for index, dict_ in enumerate(group_list):
     if 'settings' not in dict_ and dict_['name'] == name:
@@ -195,6 +205,12 @@ def _rename_setting(group_list, previous_setting_name, new_setting_name):
     setting_dict['name'] = new_setting_name
 
 
+def _rename_group(group_list, previous_group_name, new_group_name):
+  group_dict, _index = _get_child_group_dict(group_list, previous_group_name)
+  if group_dict is not None:
+    group_dict['name'] = new_group_name
+
+
 def _set_setting_attribute_value(group_list, setting_name, attrib_name, new_attrib_value):
   setting_dict, _index = _get_child_setting(group_list, setting_name)
   if setting_dict is not None:
@@ -202,9 +218,11 @@ def _set_setting_attribute_value(group_list, setting_name, attrib_name, new_attr
 
 
 def _remove_setting(group_list, setting_name):
-  _setting_dict, index = _get_child_setting(group_list, setting_name)
+  setting_dict, index = _get_child_setting(group_list, setting_name)
   if index is not None:
     del group_list[index]
+
+  return setting_dict, index
 
 
 def _update_to_0_3(data, settings, procedure_groups):
@@ -214,8 +232,8 @@ def _update_to_0_3(data, settings, procedure_groups):
   main_settings_list, _index = _get_top_level_group_list(data, 'main')
 
   if main_settings_list is not None:
-    _update_actions_to_0_3(main_settings_list, 'procedures')
-    _update_actions_to_0_3(main_settings_list, 'constraints')
+    _update_commands_to_0_3(main_settings_list, 'procedures')
+    _update_commands_to_0_3(main_settings_list, 'constraints')
 
     setting_dict, _index = _get_child_setting(main_settings_list, 'file_extension')
     if setting_dict is not None:
@@ -259,22 +277,22 @@ def _update_to_0_3(data, settings, procedure_groups):
           settings['gui/size/paned_between_previews_position'].default_value)
 
 
-def _update_actions_to_0_3(main_settings_list, action_type):
-  actions_list, _index = _get_child_group_list(main_settings_list, action_type)
+def _update_commands_to_0_3(main_settings_list, command_type):
+  commands_list, _index = _get_child_group_list(main_settings_list, command_type)
 
-  if actions_list is None:
+  if commands_list is None:
     return
 
-  for action_dict in actions_list:
-    action_list = action_dict['settings']
+  for command_dict in commands_list:
+    command_list = command_dict['settings']
 
     display_options_on_create_dict, _index = (
-      _get_child_setting(action_list, 'display_options_on_create'))
+      _get_child_setting(command_list, 'display_options_on_create'))
     if display_options_on_create_dict:
       display_options_on_create_dict['value'] = False
       display_options_on_create_dict['default_value'] = False
 
-    more_options_list, _index = _get_child_group_list(action_list, 'more_options')
+    more_options_list, _index = _get_child_group_list(command_list, 'more_options')
 
     if more_options_list is None:
       more_options_dict = {
@@ -284,25 +302,25 @@ def _update_actions_to_0_3(main_settings_list, action_type):
         },
         'settings': [],
       }
-      action_list.insert(-2, more_options_dict)
+      command_list.insert(-2, more_options_dict)
 
       more_options_list = more_options_dict['settings']
 
     enabled_for_previews_in_more_options_dict, _index = (
       _get_child_setting(more_options_list, 'enabled_for_previews'))
     if enabled_for_previews_in_more_options_dict is None:
-      enabled_for_previews_dict, index = _get_child_setting(action_list, 'enabled_for_previews')
+      enabled_for_previews_dict, index = _get_child_setting(command_list, 'enabled_for_previews')
       if enabled_for_previews_dict is not None:
-        action_list.pop(index)
+        command_list.pop(index)
         more_options_list.append(enabled_for_previews_dict)
 
     also_apply_to_parent_folders_in_more_options_dict, _index = (
       _get_child_setting(more_options_list, 'also_apply_to_parent_folders'))
     if also_apply_to_parent_folders_in_more_options_dict is None:
       also_apply_to_parent_folders_dict, index = (
-        _get_child_setting(action_list, 'also_apply_to_parent_folders'))
+        _get_child_setting(command_list, 'also_apply_to_parent_folders'))
       if also_apply_to_parent_folders_dict is not None:
-        action_list.pop(index)
+        command_list.pop(index)
         more_options_list.append(also_apply_to_parent_folders_dict)
 
 
@@ -316,22 +334,22 @@ def _update_to_0_4(data, _settings, procedure_groups):
     _remove_setting(main_settings_list, 'edit_mode')
 
     _rename_setting(main_settings_list, 'layer_filename_pattern', 'name_pattern')
-    _set_setting_attribute_value(main_settings_list, 'filename_pattern', 'type', 'name_pattern')
+    _set_setting_attribute_value(main_settings_list, 'name_pattern', 'type', 'name_pattern')
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
-    constraints_list, _index = _get_child_group_list(main_settings_list, 'constraints')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'constraints')
 
-    if procedures_list is None or constraints_list is None:
+    if actions_list is None or conditions_list is None:
       return
 
-    _handle_background_foreground_actions(procedures_list, constraints_list)
+    _handle_background_foreground_commands(actions_list, conditions_list)
 
-    for procedure_dict in procedures_list:
-      procedure_list = procedure_dict['settings']
+    for action_dict in actions_list:
+      action_list = action_dict['settings']
 
-      orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
+      orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
 
-      arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+      arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
       if orig_name_setting_dict['default_value'] == 'export' and arguments_list is not None:
         arguments_list[3]['name'] = 'single_image_name_pattern'
@@ -350,46 +368,46 @@ def _update_to_0_4(data, _settings, procedure_groups):
         orig_name_setting_dict['default_value'] = 'remove_folder_structure_for_export_layers'
 
 
-def _handle_background_foreground_actions(procedures_list, constraints_list):
-  _remove_action_by_orig_names(procedures_list, ['merge_background', 'merge_foreground'])
+def _handle_background_foreground_commands(actions_list, conditions_list):
+  _remove_command_by_orig_names(actions_list, ['merge_background', 'merge_foreground'])
 
-  merge_procedure_mapping = {
+  merge_action_mapping = {
     'insert_background': 'merge_background',
     'insert_foreground': 'merge_foreground',
   }
-  procedure_names = {action_dict['name'] for action_dict in procedures_list}
-  procedure_display_names = {
-    _get_child_setting(action_dict['settings'], 'display_name')[0]['value']
-    for action_dict in procedures_list
-    if _get_child_setting(action_dict['settings'], 'display_name')[0] is not None
+  action_names = {command_dict['name'] for command_dict in actions_list}
+  action_display_names = {
+    _get_child_setting(command_dict['settings'], 'display_name')[0]['value']
+    for command_dict in actions_list
+    if _get_child_setting(command_dict['settings'], 'display_name')[0] is not None
   }
 
-  constraint_mapping = {
+  condition_mapping = {
     'insert_background': 'not_background',
     'insert_foreground': 'not_foreground',
   }
-  constraint_names = {action_dict['name'] for action_dict in constraints_list}
-  constraint_display_names = {
-    _get_child_setting(action_dict['settings'], 'display_name')[0]['value']
-    for action_dict in constraints_list
-    if _get_child_setting(action_dict['settings'], 'display_name')[0] is not None
+  condition_names = {command_dict['name'] for command_dict in conditions_list}
+  condition_display_names = {
+    _get_child_setting(command_dict['settings'], 'display_name')[0]['value']
+    for command_dict in conditions_list
+    if _get_child_setting(command_dict['settings'], 'display_name')[0] is not None
   }
 
   merge_group_dicts = []
-  constraint_group_dicts = []
+  condition_group_dicts = []
 
-  for procedure_dict in procedures_list:
-    procedure_list = procedure_dict['settings']
-    orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
+  for action_dict in actions_list:
+    action_list = action_dict['settings']
+    orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
 
-    arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+    arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
     if (orig_name_setting_dict['default_value'] in ['insert_background', 'insert_foreground']
         and arguments_list is not None):
       arguments_list.append(
         {
           'type': 'string',
-          'name': 'merge_procedure_name',
+          'name': 'merge_action_name',
           'gui_type': None,
         })
       arguments_list.append(
@@ -399,101 +417,101 @@ def _handle_background_foreground_actions(procedures_list, constraints_list):
           'gui_type': None,
         })
 
-      merge_procedure_name = merge_procedure_mapping[orig_name_setting_dict['default_value']]
-      merge_group_dict = _create_action_as_saved_dict(
-        builtin_procedures.BUILTIN_PROCEDURES[merge_procedure_name])
+      merge_action_name = merge_action_mapping[orig_name_setting_dict['default_value']]
+      merge_group_dict = _create_command_as_saved_dict(
+        builtin_actions.BUILTIN_ACTIONS[merge_action_name])
 
-      unique_merge_procedure_name = _uniquify_action_name(merge_procedure_name, procedure_names)
-      merge_group_dict['name'] = unique_merge_procedure_name
-      arguments_list[-2]['value'] = unique_merge_procedure_name
-      arguments_list[-2]['default_value'] = unique_merge_procedure_name
+      unique_merge_action_name = _uniquify_command_name(merge_action_name, action_names)
+      merge_group_dict['name'] = unique_merge_action_name
+      arguments_list[-2]['value'] = unique_merge_action_name
+      arguments_list[-2]['default_value'] = unique_merge_action_name
 
-      merge_procedure_display_name_dict, _index = _get_child_setting(
+      merge_action_display_name_dict, _index = _get_child_setting(
         merge_group_dict['settings'], 'display_name')
-      if merge_procedure_display_name_dict is not None:
-        unique_merge_procedure_display_name = _uniquify_action_display_name(
-          merge_procedure_display_name_dict['value'], procedure_display_names)
-        merge_procedure_display_name_dict['value'] = unique_merge_procedure_display_name
+      if merge_action_display_name_dict is not None:
+        unique_merge_action_display_name = _uniquify_command_display_name(
+          merge_action_display_name_dict['value'], action_display_names)
+        merge_action_display_name_dict['value'] = unique_merge_action_display_name
 
       merge_group_dicts.append(merge_group_dict)
 
-      constraint_name = constraint_mapping[orig_name_setting_dict['default_value']]
-      constraint_group_dict = _create_action_as_saved_dict(
-        builtin_constraints.BUILTIN_CONSTRAINTS[constraint_name])
+      condition_name = condition_mapping[orig_name_setting_dict['default_value']]
+      condition_group_dict = _create_command_as_saved_dict(
+        builtin_conditions.BUILTIN_CONDITIONS[condition_name])
 
-      unique_constraint_name = _uniquify_action_name(constraint_name, constraint_names)
-      constraint_group_dict['name'] = unique_constraint_name
-      arguments_list[-1]['value'] = unique_constraint_name
-      arguments_list[-1]['default_value'] = unique_constraint_name
+      unique_condition_name = _uniquify_command_name(condition_name, condition_names)
+      condition_group_dict['name'] = unique_condition_name
+      arguments_list[-1]['value'] = unique_condition_name
+      arguments_list[-1]['default_value'] = unique_condition_name
 
-      constraint_display_name_dict, _index = _get_child_setting(
-        constraint_group_dict['settings'], 'display_name')
-      if constraint_display_name_dict is not None:
-        unique_constraint_display_name = _uniquify_action_display_name(
-          constraint_display_name_dict['value'], constraint_display_names)
-        constraint_display_name_dict['value'] = unique_constraint_display_name
+      condition_display_name_dict, _index = _get_child_setting(
+        condition_group_dict['settings'], 'display_name')
+      if condition_display_name_dict is not None:
+        unique_condition_display_name = _uniquify_command_display_name(
+          condition_display_name_dict['value'], condition_display_names)
+        condition_display_name_dict['value'] = unique_condition_display_name
 
-      constraint_group_dicts.append(constraint_group_dict)
+      condition_group_dicts.append(condition_group_dict)
 
   for merge_group_dict in merge_group_dicts:
-    procedures_list.append(merge_group_dict)
+    actions_list.append(merge_group_dict)
 
-  for constraint_group_dict in constraint_group_dicts:
-    constraints_list.append(constraint_group_dict)
+  for condition_group_dict in condition_group_dicts:
+    conditions_list.append(condition_group_dict)
 
 
-def _remove_action_by_orig_names(actions_list, action_orig_names):
+def _remove_command_by_orig_names(commands_list, command_orig_names):
   indexes = []
-  for index, action_dict in enumerate(actions_list):
-    orig_name_setting_dict, _index = _get_child_setting(action_dict['settings'], 'orig_name')
-    if orig_name_setting_dict['default_value'] in action_orig_names:
+  for index, command_dict in enumerate(commands_list):
+    orig_name_setting_dict, _index = _get_child_setting(command_dict['settings'], 'orig_name')
+    if orig_name_setting_dict['default_value'] in command_orig_names:
       indexes.append(index)
 
   for index in reversed(indexes):
-    actions_list.pop(index)
+    commands_list.pop(index)
 
 
-def _create_action_as_saved_dict(action_dict):
-  action = actions_.create_action(action_dict)
+def _create_command_as_saved_dict(command_dict):
+  command = commands_.create_command(command_dict)
 
-  source = pg.setting.SimpleInMemorySource('')
-  source.write(action)
+  source = setting_.SimpleInMemorySource('')
+  source.write(command)
 
   return source.data[0]
 
 
-def _uniquify_action_name(name, existing_names):
+def _uniquify_command_name(name, existing_names):
   """Returns ``name`` modified to be unique, i.e. to not match the name of any
-  existing action in ``actions``.
+  existing command in ``commands``.
   """
 
-  def _generate_unique_action_name():
+  def _generate_unique_command_name():
     i = 2
     while True:
       yield f'_{i}'
       i += 1
 
   uniquified_name = uniquify.uniquify_string(
-    name, existing_names, generator=_generate_unique_action_name())
+    name, existing_names, generator=_generate_unique_command_name())
 
   existing_names.add(uniquified_name)
 
   return uniquified_name
 
 
-def _uniquify_action_display_name(display_name, existing_display_names):
+def _uniquify_command_display_name(display_name, existing_display_names):
   """Returns ``display_name`` modified to be unique, i.e. to not match the
-  display name of any existing action in ``actions``.
+  display name of any existing command in ``commands``.
   """
 
-  def _generate_unique_action_display_name():
+  def _generate_unique_command_display_name():
     i = 2
     while True:
       yield f' ({i})'
       i += 1
 
   uniquified_display_name = uniquify.uniquify_string(
-    display_name, existing_display_names, generator=_generate_unique_action_display_name())
+    display_name, existing_display_names, generator=_generate_unique_command_display_name())
 
   existing_display_names.add(uniquified_display_name)
 
@@ -519,17 +537,17 @@ def _update_to_0_5(data, _settings, procedure_groups):
     if name_pattern_dict is not None and 'auto_update_gui_to_setting' in name_pattern_dict:
       del name_pattern_dict['auto_update_gui_to_setting']
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
 
-    if procedures_list is None:
+    if actions_list is None:
       return
 
-    for procedure_dict in procedures_list:
-      procedure_list = procedure_dict['settings']
+    for action_dict in actions_list:
+      action_list = action_dict['settings']
 
-      orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
+      orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
 
-      arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+      arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
       if arguments_list is not None:
         for argument_dict in arguments_list:
@@ -541,7 +559,7 @@ def _update_to_0_5(data, _settings, procedure_groups):
 
       if orig_name_setting_dict['default_value'] == 'export' and arguments_list is not None:
         # We retain `name` and only modify `orig_name` as only the latter is
-        # used in the code to check if a procedure is an export procedure.
+        # used in the code to check if an action is an export action.
         if EXPORT_LAYERS_GROUP in procedure_groups:
           orig_name_setting_dict['value'] = 'export_for_export_layers'
           orig_name_setting_dict['default_value'] = 'export_for_export_layers'
@@ -559,12 +577,12 @@ def _update_to_0_5(data, _settings, procedure_groups):
             'default_value': 'ask',
             'value': 6,
             'items': [
-              ('ask', _('Ask'), 6),
-              ('replace', _('Replace'), 0),
-              ('skip', _('Skip'), 1),
-              ('rename_new', _('Rename new file'), 2),
-              ('rename_existing', _('Rename existing file'), 3)],
-            'display_name': _('If a file already exists:'),
+              ('ask', 'Ask', 6),
+              ('replace', 'Replace', 0),
+              ('skip', 'Skip', 1),
+              ('rename_new', 'Rename new file', 2),
+              ('rename_existing', 'Rename existing file', 3)],
+            'display_name': 'If a file already exists:',
           })
 
         arguments_list.insert(
@@ -573,13 +591,13 @@ def _update_to_0_5(data, _settings, procedure_groups):
             'type': 'file_format_options',
             'name': 'file_format_export_options',
             'default_value': {
-              setting_classes_.FileFormatOptionsSetting.ACTIVE_FILE_FORMAT_KEY: 'png'},
+              setting_additional_.FileFormatOptionsSetting.ACTIVE_FILE_FORMAT_KEY: 'png'},
             'value': {
-              setting_classes_.FileFormatOptionsSetting.ACTIVE_FILE_FORMAT_KEY: 'png'},
+              setting_additional_.FileFormatOptionsSetting.ACTIVE_FILE_FORMAT_KEY: 'png'},
             'import_or_export': 'export',
             'initial_file_format': 'png',
             'gui_type': 'file_format_options',
-            'display_name': _('File format options')
+            'display_name': 'File format options'
           })
 
         arguments_list.insert(
@@ -590,10 +608,10 @@ def _update_to_0_5(data, _settings, procedure_groups):
             'default_value': 'use_explicit_values',
             'value': 1,
             'items': [
-              ('use_native_plugin_values', _('Interactively'), 0),
-              ('use_explicit_values', _('Use options below'), 1)],
-            'display_name': _('How to adjust file format options:'),
-            'description': _(
+              ('use_native_plugin_values', 'Interactively', 0),
+              ('use_explicit_values', 'Use options below', 1)],
+            'display_name': 'How to adjust file format options:',
+            'description': (
               'Native dialogs usually allow you to adjust more options such as image metadata,'
               ' while adjusting options in place is more convenient as no extra dialog is displayed'
               ' before the export.'),
@@ -614,17 +632,17 @@ def _update_to_0_5(data, _settings, procedure_groups):
           if argument_dict['name'] == 'merge_type':
             argument_dict['excluded_values'] = [3]
 
-    constraints_list, _index = _get_child_group_list(main_settings_list, 'constraints')
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'constraints')
 
-    if constraints_list is None:
+    if conditions_list is None:
       return
 
-    for constraint_dict in constraints_list:
-      constraint_list = constraint_dict['settings']
+    for condition_dict in conditions_list:
+      condition_list = condition_dict['settings']
 
-      orig_name_setting_dict, _index = _get_child_setting(constraint_list, 'orig_name')
+      orig_name_setting_dict, _index = _get_child_setting(condition_list, 'orig_name')
 
-      arguments_list, _index = _get_child_group_list(constraint_list, 'arguments')
+      arguments_list, _index = _get_child_group_list(condition_list, 'arguments')
 
       if (orig_name_setting_dict['default_value'] in ['not_background', 'not_foreground']
           and arguments_list is not None):
@@ -695,18 +713,18 @@ def _update_to_0_6(data, _settings, procedure_groups):
         if 'settings' not in setting_dict and setting_dict['type'] == 'choice':
           _update_choice_setting_for_0_6(setting_dict)
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
 
-    if procedures_list is not None:
-      for procedure_dict in procedures_list:
-        procedure_list = procedure_dict['settings']
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
 
-        function_setting_dict, _index = _get_child_setting(procedure_list, 'function')
-        orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
-        display_name_setting_dict, _index = _get_child_setting(procedure_list, 'display_name')
-        description_setting_dict, _index = _get_child_setting(procedure_list, 'description')
-        origin_setting_dict, _index = _get_child_setting(procedure_list, 'origin')
-        arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+        function_setting_dict, _index = _get_child_setting(action_list, 'function')
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        display_name_setting_dict, _index = _get_child_setting(action_list, 'display_name')
+        description_setting_dict, _index = _get_child_setting(action_list, 'description')
+        origin_setting_dict, _index = _get_child_setting(action_list, 'origin')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
         _update_origin_setting_for_0_6(origin_setting_dict)
         _update_arguments_list_for_0_6(arguments_list)
@@ -733,15 +751,15 @@ def _update_to_0_6(data, _settings, procedure_groups):
           orig_name_setting_dict['default_value'] = 'apply_opacity_from_group_layers'
 
           if display_name_setting_dict is not None:
-            display_name_setting_dict['value'] = builtin_procedures.BUILTIN_PROCEDURES[
+            display_name_setting_dict['value'] = builtin_actions.BUILTIN_ACTIONS[
               'apply_opacity_from_group_layers']['display_name']
-            display_name_setting_dict['default_value'] = builtin_procedures.BUILTIN_PROCEDURES[
+            display_name_setting_dict['default_value'] = builtin_actions.BUILTIN_ACTIONS[
               'apply_opacity_from_group_layers']['display_name']
 
           if description_setting_dict is not None:
-            description_setting_dict['value'] = builtin_procedures.BUILTIN_PROCEDURES[
+            description_setting_dict['value'] = builtin_actions.BUILTIN_ACTIONS[
               'apply_opacity_from_group_layers']['description']
-            description_setting_dict['default_value'] = builtin_procedures.BUILTIN_PROCEDURES[
+            description_setting_dict['default_value'] = builtin_actions.BUILTIN_ACTIONS[
               'apply_opacity_from_group_layers']['description']
 
         if (orig_name_setting_dict['default_value'] == 'rename_for_edit_layers'
@@ -749,19 +767,19 @@ def _update_to_0_6(data, _settings, procedure_groups):
           for argument_dict in arguments_list:
             if argument_dict['name'] == 'rename_layer_groups':
               argument_dict['name'] = 'rename_group_layers'
-              argument_dict['display_name'] = builtin_procedures.BUILTIN_PROCEDURES[
+              argument_dict['display_name'] = builtin_actions.BUILTIN_ACTIONS[
                 orig_name_setting_dict['default_value']]['arguments'][2]['display_name']
 
-    constraints_list, _index = _get_child_group_list(main_settings_list, 'constraints')
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'constraints')
 
-    if constraints_list is not None:
-      for constraint_dict in constraints_list:
-        constraint_list = constraint_dict['settings']
+    if conditions_list is not None:
+      for condition_dict in conditions_list:
+        condition_list = condition_dict['settings']
 
-        orig_name_setting_dict, _index = _get_child_setting(constraint_list, 'orig_name')
-        display_name_setting_dict, _index = _get_child_setting(constraint_list, 'display_name')
-        origin_setting_dict, _index = _get_child_setting(constraint_list, 'origin')
-        arguments_list, _index = _get_child_group_list(constraint_list, 'arguments')
+        orig_name_setting_dict, _index = _get_child_setting(condition_list, 'orig_name')
+        display_name_setting_dict, _index = _get_child_setting(condition_list, 'display_name')
+        origin_setting_dict, _index = _get_child_setting(condition_list, 'origin')
+        arguments_list, _index = _get_child_group_list(condition_list, 'arguments')
 
         _update_origin_setting_for_0_6(origin_setting_dict)
         _update_arguments_list_for_0_6(arguments_list)
@@ -774,9 +792,9 @@ def _update_to_0_6(data, _settings, procedure_groups):
 
           if display_name_setting_dict is not None:
             display_name_setting_dict['value'] = (
-              builtin_constraints.BUILTIN_CONSTRAINTS['group_layers']['display_name'])
+              builtin_conditions.BUILTIN_CONDITIONS['group_layers']['display_name'])
             display_name_setting_dict['default_value'] = (
-              builtin_constraints.BUILTIN_CONSTRAINTS['group_layers']['display_name'])
+              builtin_conditions.BUILTIN_CONDITIONS['group_layers']['display_name'])
 
 
 def _update_arguments_list_for_0_6(arguments_list):
@@ -894,14 +912,14 @@ def _update_to_0_7(data, _settings, procedure_groups):
   main_settings_list, _index = _get_top_level_group_list(data, 'main')
 
   if main_settings_list is not None:
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
 
-    if procedures_list is not None:
-      for procedure_dict in procedures_list:
-        procedure_list = procedure_dict['settings']
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
 
-        orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
-        arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
         if orig_name_setting_dict['default_value'] == 'scale' and arguments_list is not None:
           arguments_list.extend([
@@ -909,7 +927,7 @@ def _update_to_0_7(data, _settings, procedure_groups):
               'type': 'bool',
               'name': 'scale_to_fit',
               'default_value': False,
-              'display_name': _('Scale to fit'),
+              'display_name': 'Scale to fit',
               'gui_type': 'check_button',
               'value': False,
             },
@@ -917,20 +935,20 @@ def _update_to_0_7(data, _settings, procedure_groups):
               'type': 'bool',
               'name': 'keep_aspect_ratio',
               'default_value': False,
-              'display_name': _('Keep aspect ratio'),
+              'display_name': 'Keep aspect ratio',
               'gui_type': 'check_button',
               'value': False,
             },
             {
               'type': 'choice',
-              'default_value': builtin_procedures.Dimensions.WIDTH,
+              'default_value': 'width',
               'name': 'dimension_to_keep',
               'items': [
-                (builtin_procedures.Dimensions.WIDTH, _('Width')),
-                (builtin_procedures.Dimensions.HEIGHT, _('Height')),
+                ('width', 'Width'),
+                ('height', 'Height'),
               ],
-              'display_name': _('Dimension to keep'),
-              'value': builtin_procedures.Dimensions.WIDTH,
+              'display_name': 'Dimension to keep',
+              'value': 'width',
             },
           ])
 
@@ -965,16 +983,16 @@ def _update_to_0_8(data, _settings, procedure_groups):
     if export_settings_list is not None:
       _update_export_mode_setting(export_settings_list)
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
 
-    if procedures_list is not None:
-      for procedure_dict in procedures_list:
-        procedure_list = procedure_dict['settings']
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
 
-        _replace_action_tags_with_plug_in_procedure_groups(procedure_dict)
+        _replace_command_tags_with_plug_in_procedure_groups(action_dict)
 
-        orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
-        arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
         gimp_item_setting_types = [
           'item', 'drawable', 'layer', 'group_layer', 'text_layer',
@@ -1004,24 +1022,24 @@ def _update_to_0_8(data, _settings, procedure_groups):
                 argument_dict['value'][1] = argument_dict['value'][1].split('/')
                 argument_dict['value'].append(argument_dict['value'].pop(0))
 
-    constraints_list, _index = _get_child_group_list(main_settings_list, 'constraints')
-    if constraints_list is not None:
-      _remove_action_by_orig_names(constraints_list, ['selected_in_preview'])
-      for constraint_dict in constraints_list:
-        _replace_action_tags_with_plug_in_procedure_groups(constraint_dict)
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'constraints')
+    if conditions_list is not None:
+      _remove_command_by_orig_names(conditions_list, ['selected_in_preview'])
+      for condition_dict in conditions_list:
+        _replace_command_tags_with_plug_in_procedure_groups(condition_dict)
 
 
-def _replace_action_tags_with_plug_in_procedure_groups(action_dict):
+def _replace_command_tags_with_plug_in_procedure_groups(command_dict):
   tags_new_name_mapping = {
     'convert': 'plug-in-batch-convert',
     'export_layers': 'plug-in-batch-export-layers',
     'edit_layers': 'plug-in-batch-edit-layers',
   }
 
-  if 'tags' in action_dict:
-    action_dict['tags'] = [
+  if 'tags' in command_dict:
+    command_dict['tags'] = [
       tags_new_name_mapping[tag] if tag in tags_new_name_mapping else tag
-      for tag in action_dict['tags']]
+      for tag in command_dict['tags']]
 
 
 def _update_items_setting_for_0_8(settings_list, setting_name, new_type_name):
@@ -1038,7 +1056,7 @@ def _update_items_setting_for_0_8(settings_list, setting_name, new_type_name):
         new_value.append([
           item_data[0],
           item_data[1].split('/'),
-          pg.itemtree.FOLDER_KEY if len(item_data) >= 3 else '',
+          itemtree.FOLDER_KEY if len(item_data) >= 3 else '',
           image_filepath,
         ])
 
@@ -1130,14 +1148,14 @@ def _update_to_1_0_rc1(data, _settings, procedure_groups):
   if main_settings_list is not None:
     _remove_setting(main_settings_list, 'selected_items')
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
 
-    if procedures_list is not None:
-      for procedure_dict in procedures_list:
-        procedure_list = procedure_dict['settings']
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
 
-        orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
-        arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
         if orig_name_setting_dict['default_value'] == 'scale' and arguments_list is not None:
           orig_name_setting_dict['value'] = 'scale_for_layers'
@@ -1148,29 +1166,29 @@ def _update_to_1_0_rc1(data, _settings, procedure_groups):
             {
               'type': 'choice',
               'name': 'object_to_scale',
-              'default_value': builtin_procedures.ScaleObjects.LAYER,
-              'value': builtin_procedures.ScaleObjects.LAYER,
+              'default_value': 'layer',
+              'value': 'layer',
               'items': [
-                (builtin_procedures.ScaleObjects.IMAGE, _('Image')),
-                (builtin_procedures.ScaleObjects.LAYER, _('Layer')),
+                ('image', 'Image'),
+                ('layer', 'Layer'),
               ],
-              'display_name': _('Object to scale'),
+              'display_name': 'Object to scale',
             })
 
           arguments_list[4]['items'] = [
-            (builtin_procedures.Units.PERCENT_IMAGE_WIDTH, _('% of image width')),
-            (builtin_procedures.Units.PERCENT_IMAGE_HEIGHT, _('% of image height')),
-            (builtin_procedures.Units.PERCENT_LAYER_WIDTH, _('% of layer width')),
-            (builtin_procedures.Units.PERCENT_LAYER_HEIGHT, _('% of layer height')),
-            (builtin_procedures.Units.PIXELS, _('Pixels')),
+            ('percentage_of_image_width', '% of image width'),
+            ('percentage_of_image_height', '% of image height'),
+            ('percentage_of_layer_width', '% of layer width'),
+            ('percentage_of_layer_height', '% of layer height'),
+            ('pixels', 'Pixels'),
           ]
 
           arguments_list[6]['items'] = [
-            (builtin_procedures.Units.PERCENT_IMAGE_WIDTH, _('% of image width')),
-            (builtin_procedures.Units.PERCENT_IMAGE_HEIGHT, _('% of image height')),
-            (builtin_procedures.Units.PERCENT_LAYER_WIDTH, _('% of layer width')),
-            (builtin_procedures.Units.PERCENT_LAYER_HEIGHT, _('% of layer height')),
-            (builtin_procedures.Units.PIXELS, _('Pixels')),
+            ('percentage_of_image_width', '% of image width'),
+            ('percentage_of_image_height', '% of image height'),
+            ('percentage_of_layer_width', '% of layer width'),
+            ('percentage_of_layer_height', '% of layer height'),
+            ('pixels', 'Pixels'),
           ]
 
         if (orig_name_setting_dict['default_value'] == 'use_layer_size'
@@ -1185,7 +1203,7 @@ def _update_to_1_0_rc1(data, _settings, procedure_groups):
               'default_value': 'current_layer_for_array',
               'value': 'current_layer_for_array',
               'element_type': 'layer',
-              'display_name': _('Layers'),
+              'display_name': 'Layers',
             },
           )
 
@@ -1223,13 +1241,13 @@ def _update_to_1_0_rc2(data, _settings, _procedure_groups):
           if name != '_active':
             _update_choice_arguments_for_1_0_rc2(format_options)
 
-    procedures_list, _index = _get_child_group_list(main_settings_list, 'procedures')
-    if procedures_list is not None:
-      for procedure_dict in procedures_list:
-        procedure_list = procedure_dict['settings']
+    actions_list, _index = _get_child_group_list(main_settings_list, 'procedures')
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
 
-        orig_name_setting_dict, _index = _get_child_setting(procedure_list, 'orig_name')
-        arguments_list, _index = _get_child_group_list(procedure_list, 'arguments')
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
 
         if (orig_name_setting_dict['default_value'] == 'insert_background_for_images'
             and arguments_list is not None):
@@ -1245,12 +1263,12 @@ def _update_to_1_0_rc2(data, _settings, _procedure_groups):
 
         _update_filepath_and_dirpath_arguments_for_1_0_rc2(arguments_list)
 
-    constraints_list, _index = _get_child_group_list(main_settings_list, 'constraints')
-    if constraints_list is not None:
-      for constraint_dict in constraints_list:
-        constraint_list = constraint_dict['settings']
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'constraints')
+    if conditions_list is not None:
+      for condition_dict in conditions_list:
+        condition_list = condition_dict['settings']
 
-        arguments_list, _index = _get_child_group_list(constraint_list, 'arguments')
+        arguments_list, _index = _get_child_group_list(condition_list, 'arguments')
 
         _update_choice_arguments_for_1_0_rc2(arguments_list)
 
@@ -1332,6 +1350,902 @@ def _update_filepath_or_dirpath_setting(setting_dict):
     setting_dict['none_ok'] = setting_dict.pop('nullable')
 
 
+def _update_to_1_1(data, _settings, _procedure_groups):
+  main_settings_list, _index = _get_top_level_group_list(data, 'main')
+
+  if main_settings_list is not None:
+    _rename_group(main_settings_list, 'procedures', 'actions')
+    _rename_group(main_settings_list, 'constraints', 'conditions')
+
+    _add_new_attributes_to_output_directory(main_settings_list)
+
+    actions_list, _index = _get_child_group_list(main_settings_list, 'actions')
+
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
+
+        _rename_command_attributes_1_1(action_dict)
+
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
+
+        if (orig_name_setting_dict['value'].startswith('scale_for_')
+            and arguments_list is not None):
+          _scale_1_1_merge_image_layer_object_to_scale(arguments_list, orig_name_setting_dict)
+          _scale_1_1_merge_dimensions_and_units(arguments_list, orig_name_setting_dict)
+          _scale_1_1_merge_scale_to_fit_keep_aspect_ratio_and_dimension_to_keep(arguments_list)
+          _scale_1_1_add_image_resolution(arguments_list)
+          _scale_1_1_add_padding_related_arguments(arguments_list, orig_name_setting_dict)
+
+        if (orig_name_setting_dict['value'] == 'align_and_offset_layers'
+            and arguments_list is not None):
+          _align_1_1_merge_reference_object_and_layer(arguments_list)
+          _align_1_1_merge_dimensions_and_units(arguments_list)
+
+        if (orig_name_setting_dict['value'] == 'resize_to_layer_size'
+            and arguments_list is not None):
+          _resize_canvas_1_1_rename_action(orig_name_setting_dict)
+          _resize_canvas_1_1_rename_layers_argument(arguments_list)
+          _resize_canvas_1_1_add_new_arguments(arguments_list)
+
+        if (orig_name_setting_dict['value'] == 'rename_for_export_images'
+            and arguments_list is not None):
+          _rename_for_export_images_1_1_remove_rename_images_argument(arguments_list)
+
+        if (orig_name_setting_dict['value'].startswith('export_for_')
+            and arguments_list is not None):
+          _add_new_attributes_to_output_directory(arguments_list)
+
+        if ((orig_name_setting_dict['value'].startswith('insert_background_for_')
+             or orig_name_setting_dict['value'].startswith('insert_foreground_for_'))
+            and arguments_list is not None):
+          _insert_1_1_rename_arguments(arguments_list)
+
+    conditions_list, _index = _get_child_group_list(main_settings_list, 'conditions')
+    if conditions_list is not None:
+      for condition_dict in conditions_list:
+        condition_list = condition_dict['settings']
+
+        _rename_command_attributes_1_1(condition_dict)
+
+        orig_name_setting_dict, _index = _get_child_setting(condition_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(condition_list, 'arguments')
+
+        if (orig_name_setting_dict['value'] == 'matching_text'
+            and arguments_list is not None):
+          _matching_text_1_1_add_new_options(arguments_list)
+
+  gui_settings_list, _index = _get_top_level_group_list(data, 'gui')
+
+  if gui_settings_list is not None:
+    _rename_group(gui_settings_list, 'procedure_browser', 'action_browser')
+
+
+def _rename_command_attributes_1_1(command_dict):
+  if 'tags' in command_dict:
+    _replace_item_in_list(command_dict, 'tags', 'action', 'command')
+    _replace_item_in_list(command_dict, 'tags', 'procedure', 'action')
+    _replace_item_in_list(command_dict, 'tags', 'constraint', 'condition')
+
+  command_groups_setting_dict, _index = _get_child_setting(command_dict['settings'], 'action_groups')
+  if command_groups_setting_dict is not None:
+    command_groups_setting_dict['name'] = 'command_groups'
+    _replace_item_in_list(
+      command_groups_setting_dict, 'default_value', 'default_procedures', 'default_actions')
+    _replace_item_in_list(
+      command_groups_setting_dict, 'value', 'default_procedures', 'default_actions')
+    _replace_item_in_list(
+      command_groups_setting_dict, 'default_value', 'default_constraints', 'default_conditions')
+    _replace_item_in_list(
+      command_groups_setting_dict, 'value', 'default_constraints', 'default_conditions')
+
+
+def _replace_item_in_list(setting_dict, attribute_name, previous_value, new_value):
+  if previous_value in setting_dict[attribute_name]:
+    previous_value_index = setting_dict[attribute_name].index(previous_value)
+    setting_dict[attribute_name].remove(previous_value)
+    setting_dict[attribute_name].insert(previous_value_index, new_value)
+
+
+def _scale_1_1_merge_image_layer_object_to_scale(arguments_list, orig_name_setting_dict):
+  _remove_setting(arguments_list, 'image')
+  _remove_setting(arguments_list, 'layer')
+  _remove_setting(arguments_list, 'object_to_scale')
+
+  object_to_scale_default_value = 'current_image'
+  if orig_name_setting_dict['value'] == 'scale_for_layers':
+    object_to_scale_default_value = 'current_layer'
+
+  arguments_list.insert(
+    0,
+    {
+      'type': 'placeholder_image_or_layer',
+      'name': 'object_to_scale',
+      'default_value': object_to_scale_default_value,
+      'value': object_to_scale_default_value,
+      'display_name': _('Apply to (image or layer):'),
+    })
+
+
+def _scale_1_1_merge_dimensions_and_units(arguments_list, orig_name_setting_dict):
+  dimension_default_value = {
+    'pixel_value': 100.0,
+    'percent_value': 100.0,
+    'other_value': 1.0,
+    'unit': 'percent',
+    'percent_object': 'current_image',
+    'percent_property': {
+      ('current_image',): 'width',
+      ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+    },
+  }
+
+  if orig_name_setting_dict['value'] == 'scale_for_images':
+    dimension_default_value['percent_object'] = 'current_image'
+  elif orig_name_setting_dict['value'] == 'scale_for_layers':
+    dimension_default_value['percent_object'] = 'current_layer'
+
+  width_unit_setting_dict, _index = _remove_setting(arguments_list, 'width_unit')
+  width_setting_dict, _index = _get_child_setting(arguments_list, 'new_width')
+  width_setting_dict['type'] = 'dimension'
+  width_setting_dict['value'], width_setting_dict['default_value'] = _get_dimension(
+    width_setting_dict['value'],
+    width_unit_setting_dict['value'],
+    'x',
+    dimension_default_value,
+  )
+  width_setting_dict['percent_placeholder_names'] = [
+    'current_image', 'current_layer', 'background_layer', 'foreground_layer']
+  width_setting_dict['min_value'] = 0.0
+
+  height_unit_setting_dict, _index = _remove_setting(arguments_list, 'height_unit')
+  height_setting_dict, _index = _get_child_setting(arguments_list, 'new_height')
+  height_setting_dict['type'] = 'dimension'
+  height_setting_dict['value'], height_setting_dict['default_value'] = _get_dimension(
+    height_setting_dict['value'],
+    height_unit_setting_dict['value'],
+    'y',
+    dimension_default_value,
+  )
+  height_setting_dict['percent_placeholder_names'] = [
+    'current_image', 'current_layer', 'background_layer', 'foreground_layer']
+  height_setting_dict['min_value'] = 0.0
+
+
+def _scale_1_1_merge_scale_to_fit_keep_aspect_ratio_and_dimension_to_keep(arguments_list):
+  scale_to_fit_setting_dict, _index = _remove_setting(arguments_list, 'scale_to_fit')
+  keep_aspect_ratio_setting_dict, _index = _remove_setting(arguments_list, 'keep_aspect_ratio')
+  dimension_to_keep_setting_dict, _index = _remove_setting(arguments_list, 'dimension_to_keep')
+
+  value = 'stretch'
+
+  if scale_to_fit_setting_dict['value']:
+    value = 'fit'
+  elif keep_aspect_ratio_setting_dict['value']:
+    if dimension_to_keep_setting_dict['value'] == 'width':
+      value = 'keep_adjust_width'
+    else:
+      value = 'keep_adjust_height'
+
+  arguments_list.insert(
+    3,
+    {
+      'type': 'choice',
+      'name': 'aspect_ratio',
+      'default_value': value,
+      'value': value,
+      'items': [
+        ('stretch', _('None (Stretch)')),
+        ('keep_adjust_width', _('Keep, adjust width')),
+        ('keep_adjust_height', _('Keep, adjust height')),
+        ('fit', _('Fit')),
+        ('fit_with_padding', _('Fit with padding')),
+      ],
+      'display_name': _('Aspect ratio'),
+    },
+  )
+
+
+def _scale_1_1_add_image_resolution(arguments_list):
+  arguments_list.append(
+    {
+      'type': 'bool',
+      'name': 'set_image_resolution',
+      'default_value': False,
+      'value': False,
+      'display_name': _('Set image resolution in DPI'),
+    },
+  )
+  arguments_list.append(
+    {
+      'type': 'coordinates',
+      'name': 'image_resolution',
+      'default_value': {
+        'x': 72.0,
+        'y': 72.0,
+      },
+      'value': {
+        'x': 72.0,
+        'y': 72.0,
+      },
+      'show_display_name': False,
+      'gui_type_kwargs': {
+        'label_x': _('X'),
+        'label_y': _('Y'),
+      },
+    },
+  )
+
+
+def _scale_1_1_add_padding_related_arguments(arguments_list, orig_name_setting_dict):
+  arguments_list.append(
+    {
+      'type': 'color',
+      'name': 'padding_color',
+      'default_value': [0.0, 0.0, 0.0, 0.0],
+      'value': [0.0, 0.0, 0.0, 0.0],
+      'display_name': _('Padding color'),
+    },
+  )
+  arguments_list.append(
+    {
+      'type': 'choice',
+      'name': 'padding_position',
+      'default_value': 'center',
+      'value': 'center',
+      'items': [
+        ('start', _('Start')),
+        ('center', _('Center')),
+        ('end', _('End')),
+        ('custom', _('Custom')),
+      ],
+      'display_name': _('Position'),
+    },
+  )
+
+  dimension_default_value = {
+    'pixel_value': 0.0,
+    'percent_value': 0.0,
+    'other_value': 0.0,
+    'unit': 'pixel',
+    'percent_object': 'current_image',
+    'percent_property': {
+      ('current_image',): 'width',
+      ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+    },
+  }
+  if orig_name_setting_dict['value'] == 'scale_for_images':
+    dimension_default_value['percent_object'] = 'current_image'
+  elif orig_name_setting_dict['value'] == 'scale_for_layers':
+    dimension_default_value['percent_object'] = 'current_layer'
+  arguments_list.append(
+    {
+      'type': 'dimension',
+      'name': 'padding_position_custom',
+      'default_value': dimension_default_value,
+      'value': utils_.semi_deep_copy(dimension_default_value),
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Custom start position'),
+    },
+  )
+
+
+def _align_1_1_merge_reference_object_and_layer(arguments_list):
+  reference_object_setting_dict, _index = _remove_setting(arguments_list, 'reference_object')
+  reference_layer_setting_dict, _index = _remove_setting(arguments_list, 'reference_layer')
+
+  if reference_object_setting_dict['value'] == 'image':
+    reference_object_value = 'current_image'
+  else:
+    reference_object_value = reference_layer_setting_dict['value']
+
+  arguments_list.insert(
+    1,
+    {
+      'type': 'placeholder_image_or_layer',
+      'name': 'reference_object',
+      'default_value': 'current_image',
+      'value': reference_object_value,
+      'display_name': _('Object to align layers with'),
+    },
+  )
+
+
+def _align_1_1_merge_dimensions_and_units(arguments_list):
+  dimension_default_value = {
+    'pixel_value': 0.0,
+    'percent_value': 0.0,
+    'other_value': 0.0,
+    'unit': 'pixel',
+    'percent_object': 'current_layer',
+    'percent_property': {
+      ('current_image',): 'width',
+      ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+    },
+  }
+
+  x_offset_unit_setting_dict, _index = _remove_setting(arguments_list, 'x_offset_unit')
+  x_offset_setting_dict, _index = _get_child_setting(arguments_list, 'x_offset')
+  x_offset_setting_dict['type'] = 'dimension'
+  x_offset_setting_dict['value'], x_offset_setting_dict['default_value'] = _get_dimension(
+    x_offset_setting_dict['value'],
+    x_offset_unit_setting_dict['value'],
+    'x',
+    dimension_default_value,
+  )
+  x_offset_setting_dict['percent_placeholder_names'] = [
+    'current_image', 'current_layer', 'background_layer', 'foreground_layer']
+
+  y_offset_unit_setting_dict, _index = _remove_setting(arguments_list, 'y_offset_unit')
+  y_offset_setting_dict, _index = _get_child_setting(arguments_list, 'y_offset')
+  y_offset_setting_dict['type'] = 'dimension'
+  y_offset_setting_dict['value'], y_offset_setting_dict['default_value'] = _get_dimension(
+    y_offset_setting_dict['value'],
+    y_offset_unit_setting_dict['value'],
+    'y',
+    dimension_default_value,
+  )
+  y_offset_setting_dict['percent_placeholder_names'] = [
+    'current_image', 'current_layer', 'background_layer', 'foreground_layer']
+
+
+def _resize_canvas_1_1_rename_action(orig_name_setting_dict):
+  orig_name_setting_dict['value'] = 'resize_canvas'
+  orig_name_setting_dict['default_value'] = 'resize_canvas'
+
+
+def _resize_canvas_1_1_rename_layers_argument(arguments_list):
+  _rename_setting(arguments_list, 'layers', 'resize_to_layer_size_layers')
+
+
+def _resize_canvas_1_1_add_new_arguments(arguments_list):
+  arguments_list[0:0] = [
+    {
+      'type': 'placeholder_image_or_layer',
+      'name': 'object_to_resize',
+      'default_value': 'current_image',
+      'value': 'current_image',
+      'display_name': _('Apply to (image or layer):'),
+    },
+    {
+      'type': 'choice',
+      'name': 'resize_mode',
+      'default_value': 'resize_from_edges',
+      'value': 'resize_to_layer_size',
+      'items': [
+        ('resize_from_edges', _('Resize from edges')),
+        ('resize_from_position', _('Resize from position')),
+        ('resize_to_aspect_ratio', _('Resize to aspect ratio')),
+        ('resize_to_area', _('Resize to area')),
+        ('resize_to_layer_size', _('Resize to layer size')),
+      ],
+      'display_name': _('How to resize'),
+    },
+    {
+      'type': 'bool',
+      'name': 'set_fill_color',
+      'default_value': False,
+      'value': False,
+      'display_name': _('Fill added space with color'),
+    },
+    {
+      'type': 'color',
+      'name': 'fill_color',
+      'default_value': [0.0, 0.0, 0.0, 0.0],
+      'value': [0.0, 0.0, 0.0, 0.0],
+      'display_name': _('Color for added space'),
+    },
+    {
+      'type': 'bool',
+      'name': 'resize_from_edges_same_amount_for_each_side',
+      'default_value': False,
+      'value': False,
+      'display_name': _('Resize by the same amount from each side'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_edges_amount',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Amount'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_edges_top',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Top'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_edges_bottom',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Bottom'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_edges_left',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Left'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_edges_right',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Right'),
+    },
+    {
+      'type': 'anchor',
+      'name': 'resize_from_position_anchor',
+      'default_value': 'center',
+      'value': 'center',
+      'items': [
+        ('top_left', _('Top left')),
+        ('top', _('Top')),
+        ('top_right', _('Top right')),
+        ('left', _('Left')),
+        ('center', _('Center')),
+        ('right', _('Right')),
+        ('bottom_left', _('Bottom left')),
+        ('bottom', _('Bottom')),
+        ('bottom_right', _('Bottom right')),
+      ],
+      'display_name': _('Position'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_position_width',
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Width'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_from_position_height',
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Height'),
+    },
+    {
+      'type': 'coordinates',
+      'name': 'resize_to_aspect_ratio_ratio',
+      'default_value': {
+        'x': 1.0,
+        'y': 1.0,
+      },
+      'value': {
+        'x': 1.0,
+        'y': 1.0,
+      },
+      'min_x': 1.0,
+      'min_y': 1.0,
+      'display_name': _('Aspect ratio (width:height)'),
+    },
+    {
+      'type': 'choice',
+      'name': 'resize_to_aspect_ratio_position',
+      'default_value': 'center',
+      'value': 'center',
+      'items': [
+        ('start', _('Start')),
+        ('center', _('Center')),
+        ('end', _('End')),
+        ('custom', _('Custom')),
+      ],
+      'display_name': _('Position'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_to_aspect_ratio_position_custom',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Custom start position'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_to_area_x',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Offset X'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_to_area_y',
+      'default_value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'value': {
+        'pixel_value': 0.0,
+        'percent_value': 0.0,
+        'other_value': 0.0,
+        'unit': 'pixel',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Offset Y'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_to_area_width',
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'width',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'width',
+        },
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Width'),
+    },
+    {
+      'type': 'dimension',
+      'name': 'resize_to_area_height',
+      'default_value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'value': {
+        'pixel_value': 100.0,
+        'percent_value': 100.0,
+        'other_value': 1.0,
+        'unit': 'percent',
+        'percent_object': 'current_image',
+        'percent_property': {
+          ('current_image',): 'height',
+          ('current_layer', 'background_layer', 'foreground_layer'): 'height',
+        },
+      },
+      'min_value': 0.0,
+      'percent_placeholder_names': [
+        'current_image', 'current_layer', 'background_layer', 'foreground_layer'],
+      'display_name': _('Height'),
+    },
+  ]
+  arguments_list.append(
+    {
+      'type': 'placeholder_image',
+      'name': 'resize_to_image_size_image',
+      'element_type': 'image',
+      'default_value': 'current_image',
+      'value': 'current_image',
+      'display_name': _('Image'),
+    },
+  )
+
+
+def _rename_for_export_images_1_1_remove_rename_images_argument(arguments_list):
+  _remove_setting(arguments_list, 'rename_images')
+
+
+def _add_new_attributes_to_output_directory(group_list):
+  output_directory_dict, _index = _get_child_setting(group_list, 'output_directory')
+
+  if output_directory_dict is not None:
+    output_directory_dict['set_default_if_not_exists'] = True
+    output_directory_dict['gui_type_kwargs'] = {
+      'show_clear_button': False,
+    }
+
+
+def _insert_1_1_rename_arguments(arguments_list):
+  _rename_setting(arguments_list, 'merge_procedure_name', 'merge_action_name')
+  _rename_setting(arguments_list, 'constraint_name', 'condition_name')
+
+
+def _matching_text_1_1_add_new_options(arguments_list):
+  arguments_list[0]['items'] = [
+    ('starts_with', _('Starts with text')),
+    ('does_not_start_with', _('Does not start with text')),
+    ('contains', _('Contains text')),
+    ('does_not_contain', _('Does not contain text')),
+    ('ends_with', _('Ends with text')),
+    ('does_not_end_with', _('Does not end with text')),
+    ('regex', _('Matches regular expression')),
+  ]
+
+
+def _get_dimension(orig_value, orig_unit, axis, dimension_default_value):
+  dimension_value = utils_.semi_deep_copy(dimension_default_value)
+
+  if orig_unit == 'pixels':
+    dimension_value['unit'] = 'pixel'
+    dimension_value['pixel_value'] = orig_value
+
+    if axis == 'x':
+      dimension_value['percent_property'][('current_image',)] = 'width'
+      dimension_value['percent_property'][
+        ('current_layer', 'background_layer', 'foreground_layer')] = 'width'
+    else:
+      dimension_value['percent_property'][('current_image',)] = 'height'
+      dimension_value['percent_property'][
+        ('current_layer', 'background_layer', 'foreground_layer')] = 'height'
+
+  elif orig_unit.startswith('percentage_of_'):
+    dimension_value['unit'] = 'percent'
+    dimension_value['percent_value'] = orig_value
+    if orig_unit.startswith('percentage_of_image_'):
+      dimension_value['percent_object'] = 'current_image'
+    elif orig_unit.startswith('percentage_of_layer_'):
+      dimension_value['percent_object'] = 'current_layer'
+
+    if orig_unit.endswith('_width'):
+      dimension_value['percent_property'][('current_image',)] = 'width'
+      dimension_value['percent_property'][
+        ('current_layer', 'background_layer', 'foreground_layer')] = 'width'
+    else:
+      dimension_value['percent_property'][('current_image',)] = 'height'
+      dimension_value['percent_property'][
+        ('current_layer', 'background_layer', 'foreground_layer')] = 'height'
+
+  return dimension_value, dimension_default_value
+
+
+def _update_to_1_2(data, _settings, _procedure_groups):
+  main_settings_list, _index = _get_top_level_group_list(data, 'main')
+
+  if main_settings_list is not None:
+    actions_list, _index = _get_child_group_list(main_settings_list, 'actions')
+
+    if actions_list is not None:
+      for action_dict in actions_list:
+        action_list = action_dict['settings']
+
+        orig_name_setting_dict, _index = _get_child_setting(action_list, 'orig_name')
+        arguments_list, _index = _get_child_group_list(action_list, 'arguments')
+
+        if (orig_name_setting_dict['value'].startswith('scale_for_')
+            and arguments_list is not None):
+          _scale_1_2_change_show_display_name_to_gui_kwargs(arguments_list)
+
+
+def _scale_1_2_change_show_display_name_to_gui_kwargs(arguments_list):
+  del arguments_list[7]['show_display_name']
+  arguments_list[7]['gui_kwargs'] = {'show_display_name': False}
+
+
 _UPDATE_HANDLERS = {
   '0.3': _update_to_0_3,
   '0.4': _update_to_0_4,
@@ -1341,4 +2255,6 @@ _UPDATE_HANDLERS = {
   '0.8': _update_to_0_8,
   '1.0-RC1': _update_to_1_0_rc1,
   '1.0-RC2': _update_to_1_0_rc2,
+  '1.1': _update_to_1_1,
+  '1.2': _update_to_1_2,
 }

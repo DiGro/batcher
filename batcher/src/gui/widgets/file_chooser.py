@@ -1,0 +1,169 @@
+"""Widget for choosing a single file or folder."""
+
+from typing import Union
+
+import gi
+gi.require_version('Gimp', '3.0')
+from gi.repository import Gimp
+gi.require_version('GimpUi', '3.0')
+from gi.repository import GimpUi
+from gi.repository import Gio
+from gi.repository import GObject
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
+from gi.repository import Pango
+
+__all__ = [
+  'FileChooser',
+]
+
+
+class FileChooser(Gtk.Box):
+  """Class defining a GTK widget for choosing a single file or folder.
+
+  Signals:
+    changed:
+      The user changed the selected file or folder.
+
+      Signal arguments:
+        selected_file: The currently selected file as a `GFile` instance.
+  """
+
+  __gsignals__ = {'changed': (GObject.SignalFlags.RUN_FIRST, None, (Gio.File,))}
+
+  def __init__(
+        self,
+        file_action,
+        initial_value=None,
+        title='',
+        width_chars=30,
+        show_clear_button=True,
+        spacing=5,
+        *args,
+        **kwargs,
+  ):
+    super().__init__(*args, **kwargs)
+
+    self.set_orientation(Gtk.Orientation.HORIZONTAL)
+
+    self._text_entry = None
+    self._file_chooser = None
+
+    # We allow the use of `Gimp.FileChooserAction.ANY`, for which we need to
+    # create a separate widget (a plain text entry since it is unknown
+    # whether the user wants open or save files or folders).
+    if file_action == Gimp.FileChooserAction.ANY:
+      self._widget_type = 'text_entry'
+
+      if initial_value is not None and initial_value.get_path() is not None:
+        initial_text = initial_value.get_path()
+      else:
+        initial_text = ''
+
+      self._text_entry = Gtk.Entry(text=initial_text)
+      self._text_entry.set_position(-1)
+
+      self._text_entry.connect('notify::text', self._emit_changed_event)
+
+      self.pack_start(self._text_entry, True, True, 0)
+    else:
+      self._widget_type = 'file_chooser'
+
+      self._file_chooser = GimpUi.FileChooser(
+        action=file_action,
+        title=title,
+        file=initial_value,
+      )
+
+      entry = next(
+        iter(
+          child for child in self._file_chooser.get_children()
+          if isinstance(child, Gtk.Entry)),
+        None)
+
+      if entry is not None:
+        entry_packing = self._file_chooser.query_child_packing(entry)
+        self._file_chooser.set_child_packing(
+          entry, True, True, entry_packing.padding, entry_packing.pack_type)
+
+        entry.connect('notify::text', self._emit_changed_event)
+
+      button = next(
+        iter(
+          child for child in self._file_chooser.get_children()
+          if isinstance(child, (Gtk.Button, Gtk.FileChooserButton))),
+        None)
+
+      if button is not None:
+        button_packing = self._file_chooser.query_child_packing(button)
+        self._file_chooser.set_child_packing(
+          button, True, True, button_packing.padding, button_packing.pack_type)
+
+        self._set_width_chars(button, width_chars)
+        if isinstance(button, Gtk.FileChooserButton):
+          button.connect('selection-changed', self._emit_changed_event)
+
+      if show_clear_button:
+        self._button_clear = Gtk.Button.new_from_icon_name(
+          GimpUi.ICON_EDIT_CLEAR, Gtk.IconSize.BUTTON)
+        self._button_clear.set_tooltip_text(_('Clear'))
+
+        self._button_clear.connect('clicked', self._on_button_clear_clicked)
+      else:
+        self._button_clear = None
+
+      self.set_spacing(spacing)
+
+      self.pack_start(self._file_chooser, True, True, 0)
+      if self._button_clear is not None:
+        self.pack_start(self._button_clear, False, False, 0)
+
+    self.show_all()
+
+  @staticmethod
+  def _set_width_chars(button, width_chars):
+    combo_box = next(iter(child for child in button if isinstance(child, Gtk.ComboBox)), None)
+
+    if combo_box is not None:
+      cell_renderer = next(
+        iter(cr for cr in combo_box.get_cells() if isinstance(cr, Gtk.CellRendererText)), None)
+
+      if cell_renderer is not None:
+        # This should force each row to not take extra vertical space after
+        # reducing the number of characters to render.
+        cell_renderer.set_property(
+          'height', cell_renderer.get_preferred_height(combo_box).natural_size)
+
+        cell_renderer.set_property('max-width-chars', width_chars)
+        cell_renderer.set_property('ellipsize', Pango.EllipsizeMode.END)
+        cell_renderer.set_property('wrap-width', -1)
+
+  def _emit_changed_event(self, *_args, **_kwargs):
+    self.emit('changed', self.get_file())
+
+  def _on_button_clear_clicked(self, _button):
+    self.set_file(None)
+
+  def get_file(self) -> Union[Gio.File, None]:
+    if self._widget_type == 'text_entry':
+      return Gio.file_new_for_path(self._text_entry.get_text())
+    else:
+      return self._file_chooser.get_file()
+
+  def set_file(self, file_or_path: Union[Gio.File, str, None]):
+    if file_or_path is None:
+      file = Gio.file_new_for_path('')
+    elif isinstance(file_or_path, str):
+      file = Gio.file_new_for_path(file_or_path)
+    else:
+      file = file_or_path
+
+    if self._widget_type == 'text_entry':
+      self._text_entry.set_text(file.get_path() if file.get_path() is not None else '')
+      # Place the cursor at the end of the text entry.
+      self._text_entry.set_position(-1)
+    else:
+      self._file_chooser.set_file(file)
+
+
+GObject.type_register(FileChooser)

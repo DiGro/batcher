@@ -11,16 +11,17 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import Pango
 
-import pygimplib as pg
-
 from src import overwrite
-
+from src import setting as setting_
+from src import utils
 from src.gui import messages as messages_
 from src.gui import utils as gui_utils_
 from src.gui.preview import controller as previews_controller_
 from src.gui.preview import base as preview_base_
 from src.gui.preview import image as preview_image_
 from src.gui.preview import name as preview_name_
+
+from . import _utils as gui_main_utils_
 
 
 class Previews:
@@ -65,17 +66,17 @@ class Previews:
     self._top_label = top_label
     self._manage_items = manage_items
     self._display_message_func = (
-      display_message_func if display_message_func is not None else pg.utils.empty_func)
+      display_message_func if display_message_func is not None else utils.empty_func)
 
     self._current_image = current_image
 
     overwrite_chooser = overwrite.NoninteractiveOverwriteChooser(
       overwrite.OverwriteModes.RENAME_NEW)
 
-    self._batcher_for_name_preview = gui_utils_.get_batcher_class(self._item_type)(
+    self._batcher_for_name_preview = gui_main_utils_.get_batcher_class(self._item_type)(
       item_tree=self._item_tree,
-      procedures=self._settings['main/procedures'],
-      constraints=self._settings['main/constraints'],
+      actions=self._settings['main/actions'],
+      conditions=self._settings['main/conditions'],
       edit_mode=self._batcher_mode == 'edit',
       initial_export_run_mode=Gimp.RunMode.NONINTERACTIVE,
       overwrite_chooser=overwrite_chooser)
@@ -93,11 +94,11 @@ class Previews:
         if self._settings['gui/image_preview_displayed_items'].active_items else None),
     )
 
-    self._batcher_for_image_preview = gui_utils_.get_batcher_class(self._item_type)(
+    self._batcher_for_image_preview = gui_main_utils_.get_batcher_class(self._item_type)(
       # This is an empty tree that will be replaced during the preview anyway.
       item_tree=type(self._item_tree)(),
-      procedures=self._settings['main/procedures'],
-      constraints=self._settings['main/constraints'],
+      actions=self._settings['main/actions'],
+      conditions=self._settings['main/conditions'],
       edit_mode=self._batcher_mode == 'edit',
       initial_export_run_mode=Gimp.RunMode.NONINTERACTIVE,
       overwrite_chooser=overwrite_chooser)
@@ -160,13 +161,13 @@ class Previews:
 
   def _init_setting_gui(self):
     self._settings['gui/image_preview_automatic_update'].set_gui(
-      gui_type=pg.setting.SETTING_GUI_TYPES.check_menu_item,
+      gui_type=setting_.SETTING_GUI_TYPES.check_menu_item,
       widget=self._image_preview.menu_item_update_automatically,
       copy_previous_visible=False,
       copy_previous_sensitive=False,
     )
     self._settings['gui/size/paned_between_previews_position'].set_gui(
-      gui_type=pg.setting.SETTING_GUI_TYPES.paned_position,
+      gui_type=setting_.SETTING_GUI_TYPES.paned_position,
       widget=self._vpaned_previews,
       copy_previous_visible=False,
       copy_previous_sensitive=False,
@@ -235,7 +236,7 @@ class Previews:
     self._menu_add.show_all()
 
     self._button_add = Gtk.Button(
-      label=_('_Add...'), use_underline=True, hexpand=True)
+      label=_('A_dd...'), use_underline=True, hexpand=True)
 
     self._menu_item_remove_selected = Gtk.MenuItem(label=_('Remove Selected'), use_underline=False)
     self._menu_item_remove_all = Gtk.MenuItem(label=_('Remove All'), use_underline=False)
@@ -299,7 +300,7 @@ class Previews:
       Gdk.DragAction.MOVE)
 
   def _on_button_add_clicked(self, button):
-    pg.gui.menu_popup_below_widget(self._menu_add, button)
+    gui_utils_.menu_popup_below_widget(self._menu_add, button)
 
   def _on_menu_item_add_files_activate(self, _menu_item, title):
     filepaths = self._get_paths(Gtk.FileChooserAction.OPEN, title)
@@ -312,7 +313,7 @@ class Previews:
       self._add_items_to_name_preview(dirpaths)
 
   def _on_button_remove_clicked(self, button):
-    pg.gui.menu_popup_below_widget(self._menu_remove, button)
+    gui_utils_.menu_popup_below_widget(self._menu_remove, button)
 
   def _on_menu_item_remove_selected_clicked(self, _menu_item):
     self._name_preview.remove_selected_items()
@@ -451,7 +452,7 @@ class Previews:
 
   def _warn_on_adding_items(self, message_markup):
     response_id = messages_.display_alert_message(
-      parent=pg.gui.get_toplevel_window(self._vbox_previews),
+      parent=gui_utils_.get_toplevel_window(self._vbox_previews),
       message_type=Gtk.MessageType.WARNING,
       modal=True,
       destroy_with_parent=True,
@@ -471,7 +472,7 @@ class Previews:
       action=file_chooser_action,
       select_multiple=True,
       modal=True,
-      transient_for=pg.gui.get_toplevel_window(self._vbox_previews),
+      transient_for=gui_utils_.get_toplevel_window(self._vbox_previews),
     )
 
     paths = []
@@ -485,7 +486,7 @@ class Previews:
 
     return paths
 
-  def connect_events(self, action_lists, paned_outside_previews):
+  def connect_events(self, command_lists, paned_outside_previews):
     self._vpaned_previews.connect(
       'notify::position',
       self._on_paned_between_previews_notify_position)
@@ -494,8 +495,8 @@ class Previews:
       'notify::position',
       self._on_paned_outside_previews_notify_position)
 
-    self._image_preview.connect('preview-updated', self._on_image_preview_updated, action_lists)
-    self._name_preview.connect('preview-updated', self._on_name_preview_updated, action_lists)
+    self._image_preview.connect('preview-updated', self._on_image_preview_updated, command_lists)
+    self._name_preview.connect('preview-updated', self._on_name_preview_updated, command_lists)
 
     self._previews_controller.connect_setting_changes_to_previews()
 
@@ -525,11 +526,11 @@ class Previews:
         self._PREVIEWS_SENSITIVE_KEY)
     elif current_position != self._paned_outside_previews_previous_position:
       if self._image_preview.is_larger_than_image():
-        pg.invocation.timeout_add_strict(
+        utils.timeout_add_strict(
           self._DELAY_PREVIEWS_PANE_DRAG_UPDATE_MILLISECONDS,
           self._image_preview.update)
       else:
-        pg.invocation.timeout_remove(self._image_preview.update)
+        utils.timeout_remove(self._image_preview.update)
         self._image_preview.resize()
 
     self._paned_outside_previews_previous_position = current_position
@@ -565,11 +566,11 @@ class Previews:
         self._VPANED_PREVIEW_SENSITIVE_KEY)
     elif current_position != self._paned_between_previews_previous_position:
       if self._image_preview.is_larger_than_image():
-        pg.invocation.timeout_add_strict(
+        utils.timeout_add_strict(
           self._DELAY_PREVIEWS_PANE_DRAG_UPDATE_MILLISECONDS,
           self._image_preview.update)
       else:
-        pg.invocation.timeout_remove(self._image_preview.update)
+        utils.timeout_remove(self._image_preview.update)
         self._image_preview.resize()
 
     self._paned_between_previews_previous_position = current_position
@@ -577,7 +578,7 @@ class Previews:
   def _enable_preview_on_paned_drag(
         self,
         preview: preview_base_.Preview,
-        preview_sensitive_setting: pg.setting.Setting,
+        preview_sensitive_setting: setting_.Setting,
         update_lock_key: str,
   ):
     preview.lock_update(False, update_lock_key)
@@ -590,15 +591,15 @@ class Previews:
   def _disable_preview_on_paned_drag(
         self,
         preview: preview_base_.Preview,
-        preview_sensitive_setting: pg.setting.Setting,
+        preview_sensitive_setting: setting_.Setting,
         update_lock_key: str,
   ):
     preview.lock_update(True, update_lock_key)
     preview.set_sensitive(False)
     preview_sensitive_setting.set_value(False)
 
-  def _on_image_preview_updated(self, _preview, _error, update_duration_seconds, action_lists):
-    action_lists.display_warnings_and_tooltips_for_actions_and_deactivate_failing_actions(
+  def _on_image_preview_updated(self, _preview, _error, update_duration_seconds, command_lists):
+    command_lists.display_warnings_and_tooltips_for_commands_and_deactivate_failing_commands(
       self._batcher_for_image_preview)
 
     if (self._settings['gui/image_preview_automatic_update_if_below_maximum_duration'].value
@@ -610,11 +611,11 @@ class Previews:
         _('The preview no longer updates automatically as rendering takes too long.'),
         Gtk.MessageType.INFO)
 
-  def _on_name_preview_updated(self, _preview, _error, action_lists):
+  def _on_name_preview_updated(self, _preview, _error, command_lists):
     if self._manage_items:
       self._show_hide_name_preview_placeholder_label()
 
-    action_lists.display_warnings_and_tooltips_for_actions_and_deactivate_failing_actions(
+    command_lists.display_warnings_and_tooltips_for_commands_and_deactivate_failing_commands(
       self._batcher_for_name_preview, clear_previous=False)
 
   def _show_hide_name_preview_placeholder_label(self):

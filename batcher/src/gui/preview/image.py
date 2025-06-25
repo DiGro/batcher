@@ -19,14 +19,15 @@ import gi
 gi.require_version('Gimp', '3.0')
 from gi.repository import Gimp
 
-import pygimplib as pg
-
 from . import base as preview_base_
 
+from src import builtin_actions
 from src import exceptions
-from src import export as export_
-from src import utils as utils_
+from src import itemtree
+from src import utils_setting as utils_setting_
+from src import utils_pdb
 from src.gui import messages as messages_
+from src.gui import utils as gui_utils_
 
 
 class ImagePreview(preview_base_.Preview):
@@ -75,7 +76,7 @@ class ImagePreview(preview_base_.Preview):
     self._is_updating = False
     self._is_preview_image_allocated_size = False
 
-    self._set_update_duration_action_id = None
+    self._set_update_duration_command_id = None
     self._update_duration_seconds = 0.0
     
     self._init_gui()
@@ -118,7 +119,7 @@ class ImagePreview(preview_base_.Preview):
       self.clear()
       return
 
-    if self.item.type != pg.itemtree.TYPE_FOLDER:
+    if self.item.type != itemtree.TYPE_FOLDER:
       self._is_updating = True
 
       self.set_item_name_label(self.item)
@@ -159,9 +160,9 @@ class ImagePreview(preview_base_.Preview):
       and allocation.width > self._preview_pixbuf.get_width()
       and allocation.height > self._preview_pixbuf.get_height())
 
-  def set_item_name_label(self, item: pg.itemtree.Item):
+  def set_item_name_label(self, item: itemtree.Item):
     if not self._batcher.edit_mode:
-      item_state = item.get_named_state(export_.EXPORT_NAME_ITEM_STATE)
+      item_state = item.get_named_state(builtin_actions.EXPORT_NAME_ITEM_STATE)
       item_name = item_state['name'] if item_state is not None else item.name
     else:
       item_name = item.name
@@ -184,7 +185,7 @@ class ImagePreview(preview_base_.Preview):
 
     self._update_duration_seconds = 0.0
 
-    with pg.pdbutils.redirect_messages():
+    with utils_pdb.redirect_messages():
       self._preview_pixbuf, error, display_error_message_as_label = self._get_in_memory_preview()
     
     if self._preview_pixbuf is not None:
@@ -247,10 +248,10 @@ class ImagePreview(preview_base_.Preview):
       vexpand=True,
     )
 
-    self._no_selection_icon = pg.gui.utils.get_icon_pixbuf(
+    self._no_selection_icon = gui_utils_.get_icon_pixbuf(
       GimpUi.ICON_IMAGE, self, Gtk.IconSize.DIALOG)
 
-    self._folder_icon = pg.gui.utils.get_icon_pixbuf('folder', self, Gtk.IconSize.DIALOG)
+    self._folder_icon = gui_utils_.get_icon_pixbuf('folder', self, Gtk.IconSize.DIALOG)
     
     self._label_item_name = Gtk.Label(ellipsize=Pango.EllipsizeMode.MIDDLE)
     
@@ -266,9 +267,9 @@ class ImagePreview(preview_base_.Preview):
   def _get_in_memory_preview(self):
     start_update_time = time.time()
 
-    self._batcher.remove_action(
-      self._set_update_duration_action_id, groups='all', ignore_if_not_exists=True)
-    self._set_update_duration_action_id = self._batcher.add_procedure(
+    self._batcher.remove_command(
+      self._set_update_duration_command_id, groups='all', ignore_if_not_exists=True)
+    self._set_update_duration_command_id = self._batcher.add_action(
       self._set_update_duration, ['cleanup_contents'], [start_update_time], ignore_if_exists=True)
 
     image_copies, error, display_error_message_as_label = self._get_image_preview()
@@ -284,7 +285,7 @@ class ImagePreview(preview_base_.Preview):
     image_layers = image_preview.get_layers()
 
     if not image_layers:
-      pg.pdbutils.try_delete_image(image_preview)
+      utils_pdb.try_delete_image(image_preview)
       return None, error, display_error_message_as_label
 
     preview_width, preview_height = self._get_preview_size(
@@ -293,7 +294,7 @@ class ImagePreview(preview_base_.Preview):
     preview_pixbuf = self._get_preview_pixbuf(image_preview, preview_width, preview_height)
 
     for image in image_copies:
-      pg.pdbutils.try_delete_image(image)
+      utils_pdb.try_delete_image(image)
     
     return preview_pixbuf, error, display_error_message_as_label
 
@@ -301,7 +302,7 @@ class ImagePreview(preview_base_.Preview):
     self._update_duration_seconds = time.time() - start_update_time
 
   def _get_image_preview(self):
-    # We use a separate `pygimplib.ItemTree` with just the item to be previewed.
+    # We use a separate `itemtree` with just the item to be previewed.
     # A new item wrapping the original object is created to avoid introducing
     # any changes to the item from other sources (e.g. the item could be
     # renamed via the name preview).
@@ -320,18 +321,18 @@ class ImagePreview(preview_base_.Preview):
         process_contents=True,
         process_names=False,
         process_export=False,
-        **utils_.get_settings_for_batcher(self._settings['main']))
+        **utils_setting_.get_settings_for_batcher(self._settings['main']))
     except exceptions.BatcherCancelError:
       pass
     except exceptions.BatcherFileLoadError as e:
       error = e
       display_error_message_as_label = True
-    except exceptions.ActionError as e:
+    except exceptions.CommandError as e:
       messages_.display_failure_message(
-        messages_.get_failing_action_message(e),
+        messages_.get_failing_command_message(e),
         failure_message=str(e),
         details=e.traceback,
-        parent=pg.gui.get_toplevel_window(self))
+        parent=gui_utils_.get_toplevel_window(self))
       
       error = e
     except Exception as e:
@@ -339,7 +340,7 @@ class ImagePreview(preview_base_.Preview):
         _('There was a problem with updating the image preview:'),
         failure_message=str(e),
         details=traceback.format_exc(),
-        parent=pg.gui.get_toplevel_window(self))
+        parent=gui_utils_.get_toplevel_window(self))
       
       error = e
 
@@ -435,7 +436,7 @@ class ImagePreview(preview_base_.Preview):
     return pixbuf.scale_simple(width, height, GdkPixbuf.InterpType.BILINEAR)
 
   def _on_button_menu_clicked(self, button):
-    pg.gui.menu_popup_below_widget(self._menu_settings, button)
+    gui_utils_.menu_popup_below_widget(self._menu_settings, button)
   
   def _on_menu_item_update_automatically_toggled(self, menu_item):
     if self._menu_item_update_automatically.get_active():

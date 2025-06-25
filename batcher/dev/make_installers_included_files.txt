@@ -1,0 +1,20 @@
+# This file contains paths to include in or exclude from the release package.
+
+# Ignore all files
+!*
+
+# Include files
+/batcher/
+
+# Ignore files
+!*.pyc
+!*.pyo
+!*.pyi
+!*.log
+!.git*
+!.git/
+!/batcher/config/config_dev.py
+!/batcher/locale/generate_pot.sh
+!/batcher/runtests.py
+!/batcher/src/tests/
+!/batcher/dev/

@@ -2,29 +2,38 @@
 
 """Main plug-in file."""
 
-import builtins
-import gettext
 import os
+
+from src import utils
+
+_PLUGIN_DIRPATH = os.path.dirname(os.path.abspath(utils.get_current_module_filepath()))
+
+utils.initialize_i18n(os.path.join(_PLUGIN_DIRPATH, 'locale'), 'batcher')
+
+from src import logging
+
+# Initialize logging as early as possible to capture any module-level errors.
+logging.log_output(
+  stderr_handles=['file'],
+  log_dirpaths=[_PLUGIN_DIRPATH],
+  log_error_filename='error.log',
+  log_header_title=_PLUGIN_DIRPATH)
 
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 
-import pygimplib as pg
-
-gettext.bindtextdomain(
-  'batcher', os.path.join(os.path.dirname(pg.utils.get_current_module_filepath()), 'locale'))
-gettext.textdomain('batcher')
-
-builtins._ = gettext.gettext
-
-from src import actions as actions_
-from src import builtin_constraints
+from config import CONFIG
+from src import builtin_conditions
+from src import commands as commands_
+from src import constants
+from src import itemtree
+from src import setting as setting_
 from src.gui import messages as messages_
 
 messages_.set_gui_excepthook(
-  title=pg.config.PLUGIN_TITLE,
-  report_uri_list=pg.config.BUG_REPORT_URL_LIST,
+  title=CONFIG.PLUGIN_TITLE,
+  report_uri_list=CONFIG.BUG_REPORT_URL_LIST,
 )
 
 gi.require_version('Gimp', '3.0')
@@ -33,14 +42,17 @@ from gi.repository import Gimp
 from src import core
 from src import exceptions
 from src import plugin_settings
+from src import procedure as procedure_
 from src import update
-from src import utils as utils_
+from src import utils_itemtree as utils_itemtree_
+from src import utils_setting as utils_setting_
 from src.gui import main as gui_main
 from src.procedure_groups import *
 
 
 SETTINGS_CONVERT = plugin_settings.create_settings_for_convert()
 SETTINGS_EXPORT_IMAGES = plugin_settings.create_settings_for_export_images()
+SETTINGS_EDIT_AND_SAVE_IMAGES = plugin_settings.create_settings_for_edit_and_save_images()
 SETTINGS_EXPORT_LAYERS = plugin_settings.create_settings_for_export_layers()
 SETTINGS_EDIT_LAYERS = plugin_settings.create_settings_for_edit_layers()
 
@@ -50,13 +62,13 @@ def plug_in_batch_convert(_procedure, config, _data):
 
   run_mode = config.get_property('run-mode')
 
-  image_tree = pg.itemtree.ImageFileTree()
+  image_tree = itemtree.ImageFileTree()
 
   def _fill_image_tree_with_loaded_inputs(settings):
     if run_mode == Gimp.RunMode.NONINTERACTIVE:
       image_tree.add(settings['main/inputs'].value)
     else:
-      utils_.add_objects_to_item_tree(image_tree, settings['gui/inputs_interactive'].value)
+      utils_itemtree_.add_objects_to_item_tree(image_tree, settings['gui/inputs_interactive'].value)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
     return _run_interactive(
@@ -83,7 +95,7 @@ def plug_in_batch_export_images(_procedure, config, _data):
 
   run_mode = config.get_property('run-mode')
 
-  image_tree = pg.itemtree.GimpImageTree()
+  image_tree = itemtree.GimpImageTree()
   image_tree.add_opened_images()
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -109,7 +121,7 @@ def plug_in_batch_export_images_quick(_procedure, config, _data):
 
   run_mode = config.get_property('run-mode')
 
-  image_tree = pg.itemtree.GimpImageTree()
+  image_tree = itemtree.GimpImageTree()
   image_tree.add_opened_images()
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -123,10 +135,51 @@ def plug_in_batch_export_images_quick(_procedure, config, _data):
     return _run_with_last_vals(SETTINGS_EXPORT_IMAGES, image_tree, mode='export')
 
 
+def plug_in_batch_edit_and_save_images(_procedure, config, _data):
+  _set_procedure_group_and_default_setting_source(EDIT_AND_SAVE_IMAGES_GROUP)
+
+  run_mode = config.get_property('run-mode')
+
+  image_tree = itemtree.GimpImageTree()
+  image_tree.add_opened_images()
+
+  if run_mode == Gimp.RunMode.INTERACTIVE:
+    return _run_interactive(
+      SETTINGS_EDIT_AND_SAVE_IMAGES,
+      image_tree,
+      gui_main.BatchProcessingGui,
+      gui_class_kwargs=dict(
+        mode='edit', item_type='image', title=_('Edit and Save Images')),
+    )
+  elif run_mode == Gimp.RunMode.WITH_LAST_VALS:
+    return _run_with_last_vals(SETTINGS_EDIT_AND_SAVE_IMAGES, image_tree, mode='edit')
+  else:
+    return _run_noninteractive(SETTINGS_EDIT_AND_SAVE_IMAGES, image_tree, config, mode='edit')
+
+
+def plug_in_batch_edit_and_save_images_quick(_procedure, config, _data):
+  _set_procedure_group_and_default_setting_source(EDIT_AND_SAVE_IMAGES_GROUP)
+
+  run_mode = config.get_property('run-mode')
+
+  image_tree = itemtree.GimpImageTree()
+  image_tree.add_opened_images()
+
+  if run_mode == Gimp.RunMode.INTERACTIVE:
+    return _run_interactive(
+      SETTINGS_EDIT_AND_SAVE_IMAGES,
+      image_tree,
+      gui_main.BatchProcessingQuickGui,
+      gui_class_kwargs=dict(
+        mode='edit', item_type='image', title=_('Edit and Save Images (Quick)')))
+  else:
+    return _run_with_last_vals(SETTINGS_EXPORT_IMAGES, image_tree, mode='edit')
+
+
 def plug_in_batch_export_layers(_procedure, run_mode, image, _drawables, config, _data):
   _set_procedure_group_and_default_setting_source(EXPORT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -145,7 +198,7 @@ def plug_in_batch_export_layers(_procedure, run_mode, image, _drawables, config,
 def plug_in_batch_export_layers_quick(_procedure, run_mode, image, _drawables, _config, _data):
   _set_procedure_group_and_default_setting_source(EXPORT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -162,7 +215,7 @@ def plug_in_batch_export_layers_quick(_procedure, run_mode, image, _drawables, _
 def plug_in_batch_export_selected_layers(_procedure, run_mode, image, _drawables, _config, _data):
   _set_procedure_group_and_default_setting_source(EXPORT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -172,19 +225,19 @@ def plug_in_batch_export_selected_layers(_procedure, run_mode, image, _drawables
       gui_main.BatchProcessingQuickGui,
       gui_class_kwargs=dict(
         mode='export', item_type='layer', title=_('Export Selected Layers'), current_image=image),
-      process_loaded_settings_func=_set_constraints_to_only_selected_layers)
+      process_loaded_settings_func=_set_conditions_to_only_selected_layers)
   else:
     return _run_with_last_vals(
       SETTINGS_EXPORT_LAYERS,
       layer_tree,
       mode='export',
-      process_loaded_settings_func=_set_constraints_to_only_selected_layers)
+      process_loaded_settings_func=_set_conditions_to_only_selected_layers)
 
 
 def plug_in_batch_edit_layers(_procedure, run_mode, image, _drawables, config, _data):
   _set_procedure_group_and_default_setting_source(EDIT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -203,7 +256,7 @@ def plug_in_batch_edit_layers(_procedure, run_mode, image, _drawables, config, _
 def plug_in_batch_edit_layers_quick(_procedure, run_mode, image, _drawables, _config, _data):
   _set_procedure_group_and_default_setting_source(EDIT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -220,7 +273,7 @@ def plug_in_batch_edit_layers_quick(_procedure, run_mode, image, _drawables, _co
 def plug_in_batch_edit_selected_layers(_procedure, run_mode, image, _drawables, _config, _data):
   _set_procedure_group_and_default_setting_source(EDIT_LAYERS_GROUP)
 
-  layer_tree = pg.itemtree.LayerTree()
+  layer_tree = itemtree.LayerTree()
   layer_tree.add_from_image(image)
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
@@ -230,17 +283,17 @@ def plug_in_batch_edit_selected_layers(_procedure, run_mode, image, _drawables, 
       gui_main.BatchProcessingQuickGui,
       gui_class_kwargs=dict(
         mode='edit', item_type='layer', title=_('Edit Selected Layers'), current_image=image),
-      process_loaded_settings_func=_set_constraints_to_only_selected_layers)
+      process_loaded_settings_func=_set_conditions_to_only_selected_layers)
   else:
     return _run_with_last_vals(
       SETTINGS_EDIT_LAYERS,
       layer_tree,
       mode='edit',
-      process_loaded_settings_func=_set_constraints_to_only_selected_layers)
+      process_loaded_settings_func=_set_conditions_to_only_selected_layers)
 
 
 def _run_noninteractive(settings, item_tree, config, mode):
-  if pg.config.PROCEDURE_GROUP == CONVERT_GROUP:
+  if CONFIG.PROCEDURE_GROUP == CONVERT_GROUP:
     gimp_status, message = _load_inputs(
       item_tree, config.get_property('inputs'), config.get_property('max-num-inputs'))
     if gimp_status != Gimp.PDBStatusType.SUCCESS:
@@ -305,15 +358,15 @@ def _run_interactive(
 
 
 def _run_plugin_noninteractive(settings, run_mode, item_tree, mode):
-  if pg.config.PROCEDURE_GROUP == CONVERT_GROUP:
+  if CONFIG.PROCEDURE_GROUP == CONVERT_GROUP:
     batcher_class = core.ImageBatcher
   else:
     batcher_class = core.LayerBatcher
 
   batcher = batcher_class(
     item_tree=item_tree,
-    procedures=settings['main/procedures'],
-    constraints=settings['main/constraints'],
+    actions=settings['main/actions'],
+    conditions=settings['main/conditions'],
     refresh_item_tree=False,
     initial_export_run_mode=run_mode,
     edit_mode=mode == 'edit',
@@ -321,7 +374,7 @@ def _run_plugin_noninteractive(settings, run_mode, item_tree, mode):
 
   try:
     batcher.run(
-      **utils_.get_settings_for_batcher(settings['main']))
+      **utils_setting_.get_settings_for_batcher(settings['main']))
   except exceptions.BatcherCancelError:
     return Gimp.PDBStatusType.SUCCESS, 'canceled'
   except Exception as e:
@@ -331,12 +384,15 @@ def _run_plugin_noninteractive(settings, run_mode, item_tree, mode):
 
 
 def _load_inputs(item_tree, filepath, max_num_inputs):
-  if not os.path.isfile(filepath):
+  if filepath is None:
+    return (
+      Gimp.PDBStatusType.EXECUTION_ERROR, f'File containing inputs is not specified')
+  elif not os.path.isfile(filepath):
     return (
       Gimp.PDBStatusType.EXECUTION_ERROR, f'File "{filepath}" does not exist or is not a file')
 
   try:
-    with open(filepath, 'r', encoding=pg.TEXT_FILE_ENCODING) as inputs_file:
+    with open(filepath, 'r', encoding=constants.TEXT_FILE_ENCODING) as inputs_file:
       inputs = [path for path in inputs_file.read().splitlines() if path]
   except Exception as e:
     return (
@@ -356,21 +412,21 @@ def _load_inputs(item_tree, filepath, max_num_inputs):
 
 
 def _set_procedure_group_and_default_setting_source(procedure_group):
-  pg.config.PROCEDURE_GROUP = procedure_group
+  CONFIG.PROCEDURE_GROUP = procedure_group
 
-  pg.setting.Persistor.set_default_setting_sources(
-    {'persistent': pg.setting.GimpParasiteSource(procedure_group)})
+  setting_.Persistor.set_default_setting_sources(
+    {'persistent': setting_.GimpParasiteSource(procedure_group)})
 
 
 def _load_and_update_settings(settings, run_mode):
-  status, load_message = update.load_and_update(settings, procedure_group=pg.config.PROCEDURE_GROUP)
+  status, load_message = update.load_and_update(settings, procedure_group=CONFIG.PROCEDURE_GROUP)
 
   if status != update.TERMINATE:
     return True, ''
 
   if run_mode == Gimp.RunMode.INTERACTIVE:
     messages_.display_alert_message(
-      title=pg.config.PLUGIN_TITLE,
+      title=CONFIG.PLUGIN_TITLE,
       message_type=Gtk.MessageType.WARNING,
       message_markup=_(
         'Settings for this plug-in could not be updated to the latest version'
@@ -382,15 +438,15 @@ def _load_and_update_settings(settings, run_mode):
       details=load_message,
       report_description=_(
         'Send a report with the text in the details above to one of the following sites'),
-      report_uri_list=pg.config.BUG_REPORT_URL_LIST)
+      report_uri_list=CONFIG.BUG_REPORT_URL_LIST)
 
-    pg.setting.Persistor.clear()
-    actions_.clear(settings['main/procedures'])
-    actions_.clear(settings['main/constraints'])
+    setting_.Persistor.clear()
+    commands_.clear(settings['main/actions'])
+    commands_.clear(settings['main/conditions'])
 
     return True, ''
   elif run_mode == Gimp.RunMode.WITH_LAST_VALS:
-    pg.setting.Persistor.clear()
+    setting_.Persistor.clear()
 
     return (
       False,
@@ -407,10 +463,10 @@ def _load_settings_from_file(settings, settings_filepath):
       Gimp.PDBStatusType.EXECUTION_ERROR,
       _('"{}" is not a valid file with settings').format(settings_filepath))
 
-  setting_source = pg.setting.JsonFileSource(pg.config.PROCEDURE_GROUP, settings_filepath)
+  setting_source = setting_.JsonFileSource(CONFIG.PROCEDURE_GROUP, settings_filepath)
 
   status, message = update.load_and_update(
-    settings, sources={'persistent': setting_source}, procedure_group=pg.config.PROCEDURE_GROUP)
+    settings, sources={'persistent': setting_source}, procedure_group=CONFIG.PROCEDURE_GROUP)
   if status == update.TERMINATE:
     error_message = _('Failed to import settings from file "{}".').format(settings_filepath)
 
@@ -425,7 +481,7 @@ def _load_settings_from_file(settings, settings_filepath):
 def _set_settings_from_args(settings, config):
   args_as_settings = [
     setting for setting in settings
-    if isinstance(setting, pg.setting.Setting) and setting.can_be_used_in_pdb()]
+    if isinstance(setting, setting_.Setting) and setting.can_be_used_in_pdb()]
 
   args = [config.get_property(prop.name) for prop in config.list_properties()]
   # `config.list_properties()` contains additional properties or parameters
@@ -437,17 +493,17 @@ def _set_settings_from_args(settings, config):
     setting.set_value(arg)
 
 
-def _set_constraints_to_only_selected_layers(settings):
-  actions_.clear(settings['main/constraints'], add_initial_actions=False)
+def _set_conditions_to_only_selected_layers(settings):
+  commands_.clear(settings['main/conditions'], add_initial_commands=False)
 
-  actions_.add(
-    settings['main/constraints'], builtin_constraints.BUILTIN_CONSTRAINTS['selected_in_gimp'])
+  commands_.add(
+    settings['main/conditions'], builtin_conditions.BUILTIN_CONDITIONS['selected_in_gimp'])
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_convert,
   procedure_type=Gimp.Procedure,
-  arguments=pg.setting.create_params(SETTINGS_CONVERT['main']),
+  arguments=setting_.create_params(SETTINGS_CONVERT['main']),
   menu_label=_('_Batch Convert...'),
   menu_path='<Image>/File/[Export]',
   image_types='',
@@ -456,41 +512,67 @@ pg.register_procedure(
     _('Batch-process image files'),
     _('This procedure performs batch conversion of image files'
       ' to the specified file format, optionally applying arbitrary procedures'
-      ' to each item and ignoring items according to the specified constraints.'),
+      ' to each item and ignoring items according to the specified conditions.'),
   ),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_export_images,
   procedure_type=Gimp.Procedure,
-  arguments=pg.setting.create_params(SETTINGS_EXPORT_IMAGES['main']),
+  arguments=setting_.create_params(SETTINGS_EXPORT_IMAGES['main']),
   menu_label=_('E_xport Images...'),
   menu_path='<Image>/File/[Export]',
   image_types='',
   sensitivity_mask=Gimp.ProcedureSensitivityMask.ALWAYS,
   documentation=(_('Exports images opened in GIMP'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_export_images_quick,
   procedure_type=Gimp.Procedure,
-  arguments=pg.setting.create_params(SETTINGS_EXPORT_IMAGES['main/run_mode']),
+  arguments=setting_.create_params(SETTINGS_EXPORT_IMAGES['main/run_mode']),
   menu_label=_('E_xport Images (Quick)'),
   menu_path='<Image>/File/[Export]',
   image_types='',
   sensitivity_mask=Gimp.ProcedureSensitivityMask.ALWAYS,
   documentation=(_('Quickly export images opened in GIMP'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
+  plug_in_batch_edit_and_save_images,
+  procedure_type=Gimp.Procedure,
+  arguments=setting_.create_params(SETTINGS_EDIT_AND_SAVE_IMAGES['main']),
+  menu_label=_('E_dit and Save Images...'),
+  menu_path='<Image>/File/[Export]',
+  image_types='',
+  sensitivity_mask=Gimp.ProcedureSensitivityMask.ALWAYS,
+  documentation=(_('Edits and saves images opened in GIMP as XCF'), ''),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
+)
+
+
+procedure_.register_procedure(
+  plug_in_batch_edit_and_save_images_quick,
+  procedure_type=Gimp.Procedure,
+  arguments=setting_.create_params(SETTINGS_EDIT_AND_SAVE_IMAGES['main/run_mode']),
+  menu_label=_('E_dit and Save Images (Quick)'),
+  menu_path='<Image>/File/[Export]',
+  image_types='',
+  sensitivity_mask=Gimp.ProcedureSensitivityMask.ALWAYS,
+  documentation=(_('Edits and saves images opened in GIMP as XCF instantly'), ''),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
+)
+
+
+procedure_.register_procedure(
   plug_in_batch_export_layers,
-  arguments=pg.setting.create_params(SETTINGS_EXPORT_LAYERS['main']),
+  arguments=setting_.create_params(SETTINGS_EXPORT_LAYERS['main']),
   menu_label=_('E_xport Layers...'),
   menu_path='<Image>/File/[Export]',
   image_types='*',
@@ -499,11 +581,11 @@ pg.register_procedure(
     | Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Export layers as separate images'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_export_layers_quick,
   menu_label=_('E_xport Layers (Quick)'),
   menu_path='<Image>/File/[Export]',
@@ -513,11 +595,11 @@ pg.register_procedure(
     | Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Quickly export layers as separate images'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_export_selected_layers,
   menu_label=_('E_xport Selected Layers'),
   menu_path='<Layers>/Layers Menu/[Batch]',
@@ -526,13 +608,13 @@ pg.register_procedure(
     Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Quickly export selected layers as separate images'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_edit_layers,
-  arguments=pg.setting.create_params(SETTINGS_EDIT_LAYERS['main']),
+  arguments=setting_.create_params(SETTINGS_EDIT_LAYERS['main']),
   menu_label=_('E_dit Layers...'),
   menu_path='<Image>/File/[Export]',
   image_types='*',
@@ -541,11 +623,11 @@ pg.register_procedure(
     | Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Batch-edit layers'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_edit_layers_quick,
   menu_label=_('E_dit Layers (Quick)'),
   menu_path='<Image>/File/[Export]',
@@ -555,11 +637,11 @@ pg.register_procedure(
     | Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Batch-edit layers instantly'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.register_procedure(
+procedure_.register_procedure(
   plug_in_batch_edit_selected_layers,
   menu_label=_('E_dit Selected Layers'),
   menu_path='<Layers>/Layers Menu/[Batch]',
@@ -568,8 +650,8 @@ pg.register_procedure(
     Gimp.ProcedureSensitivityMask.DRAWABLE
     | Gimp.ProcedureSensitivityMask.DRAWABLES),
   documentation=(_('Batch-edit selected layers instantly'), ''),
-  attribution=(pg.config.AUTHOR_NAME, pg.config.AUTHOR_NAME, pg.config.COPYRIGHT_YEARS),
+  attribution=(CONFIG.AUTHOR_NAME, CONFIG.AUTHOR_NAME, CONFIG.COPYRIGHT_YEARS),
 )
 
 
-pg.main()
+procedure_.main()

@@ -1,0 +1,10 @@
+# Paste these commands to the Python-Fu console to generate plug-in dialog screenshots.
+
+import os
+import sys
+
+sys.path.append(os.path.join(Gimp.directory(), 'batcher', 'batcher'))
+
+from dev import make_screenshots
+
+make_screenshots.main()
